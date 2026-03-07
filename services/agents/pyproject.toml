@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "whatif-agents"
+version = "0.1.0"
+description = "WhatIf ADK agent role implementations"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic>=2.8.0",
+  "google-adk>=1.18.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3.0", "ruff>=0.6.0", "mypy>=1.11.0"]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["whatif_agents*"]
