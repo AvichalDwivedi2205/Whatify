@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #__next {
+  width: 100%;
+  height: 100%;
+  background: #070604;
+  overflow: hidden;
+}
+
+@keyframes orb-breathe {
+  0%, 100% { transform: scale(1);    filter: brightness(1); }
+  50%       { transform: scale(1.09); filter: brightness(1.2); }
+}
+@keyframes orb-listen {
+  0%, 100% { transform: scale(1);    filter: brightness(1.1); }
+  50%       { transform: scale(1.18); filter: brightness(1.5); }
+}
+@keyframes ring-out {
+  0%   { transform: scale(1);   opacity: .55; }
+  100% { transform: scale(2.8); opacity: 0;   }
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes ken-burns {
+  0%   { transform: scale(1.04) translate(0, 0); }
+  100% { transform: scale(1.13) translate(-2.5%, -1.2%); }
+}
+@keyframes grain-shift {
+  0%   { transform: translate(0, 0); }
+  10%  { transform: translate(-2%, -3%); }
+  20%  { transform: translate(3%, 1%); }
+  30%  { transform: translate(-1%, 2%); }
+  40%  { transform: translate(2%, -2%); }
+  50%  { transform: translate(-3%, 3%); }
+  60%  { transform: translate(1%, -1%); }
+  70%  { transform: translate(-2%, 1%); }
+  80%  { transform: translate(3%, 2%); }
+  90%  { transform: translate(-1%, -2%); }
+  100% { transform: translate(0, 0); }
+}
+@keyframes spin-cw  { to { transform: rotate(360deg);  } }
+@keyframes spin-ccw { to { transform: rotate(-360deg); } }
+@keyframes wave-bar {
+  0%, 100% { transform: scaleY(.25); }
+  50%      { transform: scaleY(1);   }
+}
+@keyframes line-sweep {
+  from { transform: scaleX(0); transform-origin: left; }
+  to   { transform: scaleX(1); transform-origin: left; }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: .4; }
+  50%      { opacity: 1;  }
+}
+@keyframes title-mask {
+  from { clip-path: inset(0 100% 0 0); }
+  to   { clip-path: inset(0 0% 0 0);   }
+}
+@keyframes interrupt-slide {
+  from { transform: translateY(40px); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+@keyframes credits-rise {
+  from { opacity: 0; transform: translateY(30px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+@keyframes flicker {
+  0%, 100% { opacity: 1; }
+  92%      { opacity: 1; }
+  93%      { opacity: .7; }
+  94%      { opacity: 1; }
+  97%      { opacity: .8; }
+  98%      { opacity: 1; }
+}
+@keyframes card-hover {
+  from { transform: translateY(0) scale(1); }
+  to   { transform: translateY(-4px) scale(1.02); }
+}
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(60px); }
+  to   { opacity: 1; transform: translateX(0);    }
+}
