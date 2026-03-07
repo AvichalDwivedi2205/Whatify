@@ -1,0 +1,52 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: whatif-orchestrator
+spec:
+  template:
+    spec:
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      containers:
+        - image: us-central1-docker.pkg.dev/PROJECT_ID/whatif/orchestrator:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: WHATIF_ENV
+              value: prod
+            - name: GOOGLE_CLOUD_PROJECT
+              value: PROJECT_ID
+            - name: GOOGLE_CLOUD_LOCATION
+              value: us-central1
+            - name: UPSTASH_REDIS_REST_URL
+              value: https://your-upstash-endpoint.upstash.io
+            - name: UPSTASH_REDIS_REST_TOKEN
+              value: your-upstash-rest-token
+            - name: FIRESTORE_DATABASE
+              value: "(default)"
+            - name: WHATIF_PUBSUB_TOPIC
+              value: whatif-asset-jobs
+            - name: WHATIF_VERTEX_MODEL
+              value: gemini-2.5-flash
+            - name: WHATIF_INTERLEAVED_MODEL
+              value: gemini-3.1-flash-image-preview
+            - name: WHATIF_AGENT_MAX_ATTEMPTS
+              value: "3"
+            - name: WHATIF_AGENT_RETRY_BASE_DELAY_SECONDS
+              value: "0.8"
+            - name: GOOGLE_GENAI_USE_VERTEXAI
+              value: "true"
+            - name: WHATIF_LIVE_APP_NAME
+              value: whatif-live
+            - name: WHATIF_LIVE_MODEL
+              value: gemini-live-2.5-flash-native-audio
+            - name: WHATIF_LIVE_VOICE
+              value: Aoede
+            - name: WHATIF_INPUT_AUDIO_MIME
+              value: audio/pcm;rate=16000
+            - name: WHATIF_ENABLE_AFFECTIVE_DIALOG
+              value: "true"
+            - name: WHATIF_ENABLE_PROACTIVE_AUDIO
+              value: "false"
+            - name: WHATIF_ORCHESTRATOR_CALLBACK_URL
+              value: https://whatif-orchestrator-xxxxx-uc.a.run.app/api/v1/assets/jobs/callback
