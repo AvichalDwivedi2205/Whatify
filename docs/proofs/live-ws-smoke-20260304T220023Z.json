@@ -1,0 +1,26 @@
+{
+  "timestamp": "20260304T220023Z",
+  "session_id": "s_c191150e4f4e549d",
+  "orchestrator_url": "https://whatif-orchestrator-vgs7ulm4xa-uc.a.run.app",
+  "messages": [
+    {
+      "type": "adk_event"
+    },
+    {
+      "type": "adk_event"
+    },
+    {
+      "type": "adk_event"
+    },
+    {
+      "type": "output_transcript"
+    },
+    {
+      "type": "adk_event"
+    },
+    {
+      "type": "audio_chunk"
+    }
+  ],
+  "live_model": "gemini-live-2.5-flash-native-audio"
+}

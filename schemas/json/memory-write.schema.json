@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "whatif/memory-write.schema.json",
+  "title": "MemoryWrite",
+  "type": "object",
+  "required": ["kind", "session_id", "beat_id", "payload"],
+  "properties": {
+    "kind": { "type": "string" },
+    "session_id": { "type": "string" },
+    "beat_id": { "type": "string" },
+    "payload": { "type": "object" }
+  },
+  "additionalProperties": false
+}

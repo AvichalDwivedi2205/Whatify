@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "whatif/ui-action.schema.json",
+  "title": "UIAction",
+  "type": "object",
+  "required": ["action_id", "type", "payload", "ts", "retry_count"],
+  "properties": {
+    "action_id": { "type": "string" },
+    "type": {
+      "type": "string",
+      "enum": [
+        "SET_SCENE",
+        "SHOW_ACT_REVEAL",
+        "SHOW_INTERMISSION",
+        "SHOW_STORYBOARD",
+        "PLAY_VIDEO",
+        "SHOW_INTERLEAVED_BLOCKS",
+        "SHOW_CHOICES",
+        "UPDATE_TIMELINE",
+        "SHOW_REALITY_ANCHOR",
+        "SHOW_EXPLAIN_OVERLAY",
+        "SET_MODE",
+        "CAPTION_APPEND"
+      ]
+    },
+    "payload": { "type": "object" },
+    "ts": { "type": "string", "format": "date-time" },
+    "retry_count": { "type": "integer", "minimum": 0 }
+  },
+  "additionalProperties": false
+}

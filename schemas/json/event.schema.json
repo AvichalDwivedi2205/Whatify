@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "whatif/event.schema.json",
+  "title": "Event",
+  "type": "object",
+  "required": ["event_id", "ts", "session_id", "branch_id", "beat_id", "type", "payload", "links"],
+  "properties": {
+    "event_id": { "type": "string" },
+    "ts": { "type": "string", "format": "date-time" },
+    "session_id": { "type": "string" },
+    "branch_id": { "type": "string" },
+    "beat_id": { "type": "string" },
+    "type": { "type": "string" },
+    "payload": { "type": "object" },
+    "links": {
+      "type": "object",
+      "required": ["asset_ids", "graph_edge_ids"],
+      "properties": {
+        "asset_ids": { "type": "array", "items": { "type": "string" } },
+        "graph_edge_ids": { "type": "array", "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

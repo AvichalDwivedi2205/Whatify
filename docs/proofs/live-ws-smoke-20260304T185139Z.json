@@ -1,0 +1,31 @@
+{
+  "timestamp": "20260304T185139Z",
+  "orchestrator_url": "https://whatif-orchestrator-vgs7ulm4xa-uc.a.run.app",
+  "session_id": "s_2e6f36c577fe541c",
+  "messages": [
+    {
+      "type": "adk_event"
+    },
+    {
+      "type": "adk_event"
+    },
+    {
+      "type": "adk_event"
+    },
+    {
+      "type": "adk_event"
+    },
+    {
+      "type": "adk_event"
+    },
+    {
+      "type": "output_transcript"
+    },
+    {
+      "type": "adk_event"
+    },
+    {
+      "type": "audio_chunk"
+    }
+  ]
+}

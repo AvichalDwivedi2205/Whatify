@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "whatif/asset-job.schema.json",
+  "title": "AssetJob",
+  "type": "object",
+  "required": [
+    "job_id",
+    "type",
+    "priority",
+    "session_id",
+    "branch_id",
+    "beat_id",
+    "shot_id",
+    "prompt",
+    "style_ref",
+    "deadline_ms"
+  ],
+  "properties": {
+    "job_id": { "type": "string" },
+    "type": { "type": "string", "enum": ["storyboard", "hero_video"] },
+    "priority": { "type": "string", "enum": ["high", "normal", "low"] },
+    "session_id": { "type": "string" },
+    "branch_id": { "type": "string" },
+    "beat_id": { "type": "string" },
+    "shot_id": { "type": "string" },
+    "prompt": { "type": "string" },
+    "style_ref": { "type": "string" },
+    "deadline_ms": { "type": "integer", "minimum": 1000 }
+  },
+  "additionalProperties": false
+}

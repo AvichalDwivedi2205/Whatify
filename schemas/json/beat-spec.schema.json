@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "whatif/beat-spec.schema.json",
+  "title": "BeatSpec",
+  "type": "object",
+  "required": [
+    "beat_id",
+    "objective",
+    "setup",
+    "escalation",
+    "choices",
+    "consequence_seed",
+    "transition_hook",
+    "active_entities",
+    "branch_rule_updates"
+  ],
+  "properties": {
+    "beat_id": { "type": "string" },
+    "objective": { "type": "string" },
+    "setup": { "type": "string" },
+    "escalation": { "type": "string" },
+    "act_title": { "type": "string" },
+    "act_time_label": { "type": "string" },
+    "narration_script": { "type": "string" },
+    "intermission_line": { "type": "string" },
+    "choices": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["choice_id", "label", "consequence_hint"],
+        "properties": {
+          "choice_id": { "type": "string" },
+          "label": { "type": "string" },
+          "consequence_hint": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "consequence_seed": { "type": "string" },
+    "transition_hook": { "type": "string" },
+    "active_entities": { "type": "array", "items": { "type": "string" } },
+    "branch_rule_updates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["rule_id", "statement", "confidence", "constraints"],
+        "properties": {
+          "rule_id": { "type": "string" },
+          "statement": { "type": "string" },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+          "constraints": { "type": "array", "items": { "type": "string" } }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

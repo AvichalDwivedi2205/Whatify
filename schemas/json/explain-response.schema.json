@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "whatif/explain-response.schema.json",
+  "title": "ExplainResponse",
+  "type": "object",
+  "required": ["spoken_answer", "overlay_chain", "groundedness_flags"],
+  "properties": {
+    "spoken_answer": { "type": "string" },
+    "overlay_chain": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["edge_id", "from_node", "to_node", "justification", "supporting_event_ids", "confidence"],
+        "properties": {
+          "edge_id": { "type": "string" },
+          "from_node": { "type": "string" },
+          "to_node": { "type": "string" },
+          "justification": { "type": "string" },
+          "supporting_event_ids": { "type": "array", "items": { "type": "string" } },
+          "confidence": { "type": "number", "minimum": 0, "maximum": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "groundedness_flags": {
+      "type": "object",
+      "additionalProperties": { "type": "boolean" }
+    }
+  },
+  "additionalProperties": false
+}
