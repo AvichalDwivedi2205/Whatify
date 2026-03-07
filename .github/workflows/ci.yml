@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  orchestrator:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/orchestrator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v3
+      - name: Install
+        run: uv pip install --system -e .[dev]
+      - name: Lint
+        run: uv run ruff check app tests
+      - name: Type Check
+        run: uv run mypy app
+      - name: Test
+        run: uv run pytest
+
+  workers:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/workers
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v3
+      - name: Install
+        run: uv pip install --system -e .[dev]
+      - name: Lint
+        run: uv run ruff check app
+      - name: Compile
+        run: uv run python -m py_compile app/main.py
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Install
+        run: bun install
+      - name: Lint Console
+        run: bun run --cwd apps/console lint
+      - name: Lint Cinematic
+        run: bun run --cwd apps/cinematic-ui lint

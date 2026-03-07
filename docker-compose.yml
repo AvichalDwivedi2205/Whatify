@@ -1,0 +1,37 @@
+version: "3.9"
+
+services:
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+    environment:
+      - WHATIF_ENV=prod
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-us-central1}
+      - UPSTASH_REDIS_REST_URL=${UPSTASH_REDIS_REST_URL}
+      - UPSTASH_REDIS_REST_TOKEN=${UPSTASH_REDIS_REST_TOKEN}
+      - FIRESTORE_DATABASE=${FIRESTORE_DATABASE:-(default)}
+      - WHATIF_PUBSUB_TOPIC=${WHATIF_PUBSUB_TOPIC:-whatif-asset-jobs}
+      - WHATIF_VERTEX_MODEL=${WHATIF_VERTEX_MODEL:-gemini-2.5-pro}
+      - GOOGLE_GENAI_USE_VERTEXAI=${GOOGLE_GENAI_USE_VERTEXAI:-true}
+      - WHATIF_LIVE_APP_NAME=${WHATIF_LIVE_APP_NAME:-whatif-live}
+      - WHATIF_LIVE_MODEL=${WHATIF_LIVE_MODEL:-gemini-live-2.5-flash-preview-native-audio-09-2025}
+      - WHATIF_LIVE_VOICE=${WHATIF_LIVE_VOICE:-Aoede}
+      - WHATIF_INPUT_AUDIO_MIME=${WHATIF_INPUT_AUDIO_MIME:-audio/pcm;rate=16000}
+      - WHATIF_ENABLE_AFFECTIVE_DIALOG=${WHATIF_ENABLE_AFFECTIVE_DIALOG:-true}
+      - WHATIF_ENABLE_PROACTIVE_AUDIO=${WHATIF_ENABLE_PROACTIVE_AUDIO:-false}
+      - WHATIF_ORCHESTRATOR_CALLBACK_URL=${WHATIF_ORCHESTRATOR_CALLBACK_URL}
+    ports:
+      - "8080:8080"
+
+  workers:
+    build:
+      context: ./services/workers
+    environment:
+      - GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}
+      - GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION:-us-central1}
+      - WHATIF_ASSET_BUCKET=${WHATIF_ASSET_BUCKET}
+      - WHATIF_IMAGE_MODEL=${WHATIF_IMAGE_MODEL:-imagen-3.0-generate-002}
+      - WHATIF_VIDEO_MODEL=${WHATIF_VIDEO_MODEL:-veo-2.0-generate-001}
+    ports:
+      - "8090:8090"

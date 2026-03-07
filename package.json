@@ -1,0 +1,14 @@
+{
+  "name": "whatif",
+  "private": true,
+  "packageManager": "bun@1.2.14",
+  "workspaces": [
+    "apps/console",
+    "apps/cinematic-ui"
+  ],
+  "scripts": {
+    "dev:console": "bun run --cwd apps/console dev",
+    "dev:cinematic": "bun run --cwd apps/cinematic-ui dev",
+    "lint:web": "bun run --cwd apps/console lint && bun run --cwd apps/cinematic-ui lint"
+  }
+}
