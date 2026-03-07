@@ -1,0 +1,24 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: whatif-workers
+spec:
+  template:
+    spec:
+      containerConcurrency: 20
+      timeoutSeconds: 300
+      containers:
+        - image: us-central1-docker.pkg.dev/PROJECT_ID/whatif/workers:latest
+          ports:
+            - containerPort: 8090
+          env:
+            - name: GOOGLE_CLOUD_PROJECT
+              value: PROJECT_ID
+            - name: GOOGLE_CLOUD_LOCATION
+              value: us-central1
+            - name: WHATIF_ASSET_BUCKET
+              value: your-asset-bucket
+            - name: WHATIF_IMAGE_MODEL
+              value: imagen-3.0-generate-002
+            - name: WHATIF_VIDEO_MODEL
+              value: veo-2.0-generate-001
