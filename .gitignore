@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+dist/
+coverage/
+
+# OS
+.DS_Store
+
+# Local env
+.env
+.env.local
+.env.*.local
+!.env.example
+!*.env.example
+
+# Build artifacts
+build/
+.uv-cache/
+
+# Logs
+*.log
+logs/
