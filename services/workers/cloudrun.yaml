@@ -12,6 +12,8 @@ spec:
           ports:
             - containerPort: 8090
           env:
+            - name: GEMINI_API_KEY
+              value: your-gemini-api-key
             - name: GOOGLE_CLOUD_PROJECT
               value: PROJECT_ID
             - name: GOOGLE_CLOUD_LOCATION
@@ -19,6 +21,6 @@ spec:
             - name: WHATIF_ASSET_BUCKET
               value: your-asset-bucket
             - name: WHATIF_IMAGE_MODEL
-              value: imagen-3.0-generate-002
+              value: gemini-3.1-flash-image-preview
             - name: WHATIF_VIDEO_MODEL
-              value: veo-2.0-generate-001
+              value: veo-3.1-fast-generate-preview

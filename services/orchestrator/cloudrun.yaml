@@ -18,6 +18,8 @@ spec:
               value: PROJECT_ID
             - name: GOOGLE_CLOUD_LOCATION
               value: us-central1
+            - name: GEMINI_API_KEY
+              value: your-gemini-api-key
             - name: UPSTASH_REDIS_REST_URL
               value: https://your-upstash-endpoint.upstash.io
             - name: UPSTASH_REDIS_REST_TOKEN
@@ -26,20 +28,20 @@ spec:
               value: "(default)"
             - name: WHATIF_PUBSUB_TOPIC
               value: whatif-asset-jobs
-            - name: WHATIF_VERTEX_MODEL
+            - name: WHATIF_GEMINI_MODEL
               value: gemini-2.5-flash
             - name: WHATIF_INTERLEAVED_MODEL
               value: gemini-3.1-flash-image-preview
+            - name: WHATIF_INTERLEAVED_FALLBACK_MODEL
+              value: gemini-2.5-flash-image
             - name: WHATIF_AGENT_MAX_ATTEMPTS
               value: "3"
             - name: WHATIF_AGENT_RETRY_BASE_DELAY_SECONDS
               value: "0.8"
-            - name: GOOGLE_GENAI_USE_VERTEXAI
-              value: "true"
             - name: WHATIF_LIVE_APP_NAME
               value: whatif-live
             - name: WHATIF_LIVE_MODEL
-              value: gemini-live-2.5-flash-native-audio
+              value: gemini-2.5-flash-native-audio-preview-12-2025
             - name: WHATIF_LIVE_VOICE
               value: Aoede
             - name: WHATIF_INPUT_AUDIO_MIME
@@ -47,6 +49,14 @@ spec:
             - name: WHATIF_ENABLE_AFFECTIVE_DIALOG
               value: "true"
             - name: WHATIF_ENABLE_PROACTIVE_AUDIO
+              value: "false"
+            - name: WHATIF_LIVE_MAX_RETRIES
+              value: "3"
+            - name: WHATIF_LIVE_RETRY_BASE_DELAY_SECONDS
+              value: "0.75"
+            - name: WHATIF_LIVE_RETRY_MAX_DELAY_SECONDS
+              value: "4.0"
+            - name: WHATIF_VERBOSE_THIRD_PARTY_LOGS
               value: "false"
             - name: WHATIF_ORCHESTRATOR_CALLBACK_URL
               value: https://whatif-orchestrator-xxxxx-uc.a.run.app/api/v1/assets/jobs/callback
