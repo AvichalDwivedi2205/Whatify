@@ -1356,6 +1356,7 @@ function SceneFilmstrip({
   moments,
   momentIndex,
   progress,
+  narrationStarted,
   narrationText,
 }: {
   theme: ActTheme;
@@ -1363,12 +1364,14 @@ function SceneFilmstrip({
   moments: SceneMoment[];
   momentIndex: number;
   progress: number;
+  narrationStarted: boolean;
   narrationText: string;
 }) {
   const currentMoment = moments[Math.min(momentIndex, Math.max(moments.length - 1, 0))];
   if (!currentMoment) return null;
-  const displayBody = narrationText.trim() || currentMoment.body;
-  const displayCaption = firstSentence(displayBody) || currentMoment.caption;
+  const liveNarration = narrationText.trim();
+  const displayBody = narrationStarted ? (liveNarration || currentMoment.body) : "";
+  const displayCaption = firstSentence(liveNarration || currentMoment.caption || currentMoment.body) || currentMoment.caption;
   return (
     <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
       <div key={currentMoment.id} style={{ position: "absolute", inset: 0, overflow: "hidden", animation: "fade-in .55s ease" }}>
@@ -1473,13 +1476,15 @@ function SceneFilmstrip({
           >
             {displayCaption}
           </div>
-          <div style={{ maxHeight: "24vh", overflowY: "auto", paddingRight: 6, scrollbarWidth: "thin" }}>
-            <NarrationWords
-              text={displayBody}
-              progress={progress}
-              accent={theme.accent}
-            />
-          </div>
+          {displayBody ? (
+            <div style={{ maxHeight: "24vh", overflowY: "auto", paddingRight: 6, scrollbarWidth: "thin" }}>
+              <NarrationWords
+                text={displayBody}
+                progress={progress}
+                accent={theme.accent}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
     </div>
@@ -2051,6 +2056,7 @@ export default function CinematicPage() {
   const [aiSpeaking, setAiSpeaking] = useState(false);
   const [narrationStarted, setNarrationStarted] = useState(false);
   const [sceneTurnComplete, setSceneTurnComplete] = useState(false);
+  const [audioActivityTick, setAudioActivityTick] = useState(0);
   const [momentIndex, setMomentIndex] = useState(0);
   const [momentProgress, setMomentProgress] = useState(0);
   const [summaryPrompt, setSummaryPrompt] = useState(DEFAULT_SUMMARY_PROMPT);
@@ -2093,6 +2099,9 @@ export default function CinematicPage() {
   const pendingActingOutputRef = useRef<TranscriptState>(emptyTranscriptState());
   const pendingActingOutputFinalRef = useRef(false);
   const pendingActingTurnCompleteRef = useRef(false);
+  const audioPlaybackStartedAtRef = useRef<number | null>(null);
+  const audioPlaybackEndsAtRef = useRef<number | null>(null);
+  const lastAudioChunkAtRef = useRef(0);
   const onboardingGreetingSentRef = useRef(false);
   const onboardingIntroRetryCountRef = useRef(0);
   const onboardingIntroPendingRef = useRef(false);
@@ -2173,6 +2182,8 @@ export default function CinematicPage() {
     playSourcesRef.current.clear();
     playPendingChunksRef.current = 0;
     playCursorRef.current = playCtxRef.current?.currentTime ?? 0;
+    audioPlaybackStartedAtRef.current = null;
+    audioPlaybackEndsAtRef.current = null;
     setAiSpeaking(false);
   }, []);
 
@@ -2214,10 +2225,17 @@ export default function CinematicPage() {
     if (gain) source.connect(gain);
     else source.connect(context.destination);
     const startAt = Math.max(context.currentTime, playCursorRef.current);
+    const startedAtMs = Date.now() + Math.max(0, startAt - context.currentTime) * 1000;
     source.start(startAt);
     playSourcesRef.current.add(source);
     playCursorRef.current = startAt + buffer.duration;
     playPendingChunksRef.current += 1;
+    audioPlaybackStartedAtRef.current = audioPlaybackStartedAtRef.current === null
+      ? startedAtMs
+      : Math.min(audioPlaybackStartedAtRef.current, startedAtMs);
+    audioPlaybackEndsAtRef.current = Date.now() + Math.max(0, playCursorRef.current - context.currentTime) * 1000;
+    lastAudioChunkAtRef.current = Date.now();
+    setAudioActivityTick((previous) => previous + 1);
     setAiSpeaking(true);
     source.onended = () => {
       playSourcesRef.current.delete(source);
@@ -2231,11 +2249,11 @@ export default function CinematicPage() {
     if (response.ok) setSessionState((await response.json()) as SessionState);
   }, []);
 
-  const hydrateBeatVisuals = useCallback(async (sessionId: string, beatId: string) => {
-    if (!beatId.trim()) return;
+  const hydrateBeatVisuals = useCallback(async (sessionId: string, beatId: string): Promise<VisualStateResponse | null> => {
+    if (!beatId.trim()) return null;
     try {
       const response = await fetch(`${API_BASE}/api/v1/session/${sessionId}/visual-state?beat_id=${encodeURIComponent(beatId)}`);
-      if (!response.ok) return;
+      if (!response.ok) return null;
       const payload = (await response.json()) as VisualStateResponse;
       const interleavedRun = payload.interleaved_run;
       if (interleavedRun) {
@@ -2269,9 +2287,11 @@ export default function CinematicPage() {
           setHeroVideoByBeat((previous) => ({ ...previous, [beatId]: heroUri }));
         }
       }
+      return payload;
     } catch {
       // Visual hydration is best-effort; websocket actions still stream live updates.
     }
+    return null;
   }, []);
 
   const ackAction = useCallback(async (sessionId: string, actionId: string) => {
@@ -2314,6 +2334,9 @@ export default function CinematicPage() {
     pendingActingOutputFinalRef.current = false;
     pendingActingTurnCompleteRef.current = false;
     pendingActingOutputRef.current = emptyTranscriptState();
+    audioPlaybackStartedAtRef.current = null;
+    audioPlaybackEndsAtRef.current = null;
+    lastAudioChunkAtRef.current = 0;
     setLiveOutputState((previous) =>
       options?.preserveCommittedOutput ? { committed: previous.committed, pending: "" } : emptyTranscriptState(),
     );
@@ -2719,6 +2742,12 @@ export default function CinematicPage() {
     }
 
     if (message.type === "audio_chunk" && message.data && message.mime_type) {
+      const allowSummaryAudio = phaseRef.current === "actSummary" && questionPendingRef.current;
+      const allowAudioPlayback = phaseRef.current === "acting" || phaseRef.current === "onboarding" || allowSummaryAudio;
+      if (!allowAudioPlayback) {
+        debugLog("live:audio:ignored", { phase: phaseRef.current });
+        return;
+      }
       if (phaseRef.current === "onboarding" && !onboardingHandoffRef.current) {
         onboardingIntroPendingRef.current = false;
         clearTimeoutRef(onboardingIntroRetryTimerRef);
@@ -2858,16 +2887,38 @@ export default function CinematicPage() {
     options?: { forceReconnect?: boolean },
   ) => {
     if (!payload.beatId.trim()) return;
-    const actMoments = buildMoments(
+    const theme = actTheme(actRevealState?.beatIndex ?? sessionState?.beat_index ?? 1);
+    let actMoments = buildMoments(
       interleavedRunsByBeat[payload.beatId] ?? null,
       storyboardAssetsByBeat[payload.beatId] ?? {},
       payload,
-      actTheme(actRevealState?.beatIndex ?? sessionState?.beat_index ?? 1),
+      theme,
     );
     if (actMoments.length === 0) return;
 
     const boundedIndex = Math.max(0, Math.min(startIndex, actMoments.length - 1));
-    const currentMoment = actMoments[boundedIndex];
+    let currentMoment = actMoments[boundedIndex];
+    if (!currentMoment?.imageSrc && session?.session_id) {
+      const hydrated = await hydrateBeatVisuals(session.session_id, payload.beatId);
+      if (hydrated) {
+        const hydratedStoryboardAssets = {
+          ...(storyboardAssetsByBeat[payload.beatId] ?? {}),
+          ...Object.fromEntries(
+            hydrated.storyboard_frames
+              .filter((frame) => frame.uri)
+              .map((frame) => [frame.shot_id, toBrowserUri(frame.uri ?? undefined)])
+              .filter((entry): entry is [string, string] => Boolean(entry[1])),
+          ),
+        };
+        actMoments = buildMoments(
+          hydrated.interleaved_run ?? interleavedRunsByBeat[payload.beatId] ?? null,
+          hydratedStoryboardAssets,
+          payload,
+          theme,
+        );
+        currentMoment = actMoments[boundedIndex] ?? currentMoment;
+      }
+    }
     await ensureMomentImageReady(currentMoment.imageSrc);
 
     const socket = options?.forceReconnect && session?.session_id
@@ -2953,7 +3004,7 @@ export default function CinematicPage() {
       void cueNarration(payload, boundedIndex, attempt + 1, { forceReconnect: true });
     }, NARRATION_RESPONSE_TIMEOUT_MS);
     debugLog("narration:cue", { beatId: payload.beatId, momentIndex: boundedIndex, attempt });
-  }, [actRevealState?.beatIndex, buildNarrationSnapshot, clearNarrationTimers, connectLive, ensureActLive, ensureMomentImageReady, interleavedRunsByBeat, resetNarrationPhase, resetPlayback, session?.session_id, sessionState?.beat_index, storyboardAssetsByBeat]);
+  }, [actRevealState?.beatIndex, buildNarrationSnapshot, clearNarrationTimers, connectLive, ensureActLive, ensureMomentImageReady, hydrateBeatVisuals, interleavedRunsByBeat, resetNarrationPhase, resetPlayback, session?.session_id, sessionState?.beat_index, storyboardAssetsByBeat]);
 
   const launchActReveal = useCallback((nextReveal: ActRevealState) => {
     clearRevealTimers();
@@ -3065,6 +3116,7 @@ export default function CinematicPage() {
   const continueStory = useCallback(async () => {
     const sessionId = session?.session_id;
     if (!sessionId) return;
+    await disconnectLive();
     setPhase("processing");
     resetNarrationPhase();
     const response = await fetch(`${API_BASE}/api/v1/session/${sessionId}/continue`, { method: "POST" });
@@ -3073,7 +3125,7 @@ export default function CinematicPage() {
       return;
     }
     await refreshState(sessionId);
-  }, [refreshState, resetNarrationPhase, session?.session_id]);
+  }, [disconnectLive, refreshState, resetNarrationPhase, session?.session_id]);
 
   continueStoryRef.current = continueStory;
 
@@ -3149,8 +3201,13 @@ export default function CinematicPage() {
   useEffect(() => {
     if (phase !== "acting" || moments.length === 0 || !narrationStarted) return undefined;
     setMomentProgress(0);
-    const duration = momentDurationMs(activeMoment, currentNarrationText);
-    const start = Date.now();
+    const playbackStart = audioPlaybackStartedAtRef.current;
+    const playbackEnd = audioPlaybackEndsAtRef.current;
+    const hasPlaybackWindow = playbackStart !== null && playbackEnd !== null && playbackEnd > playbackStart;
+    const duration = hasPlaybackWindow
+      ? Math.max(2200, playbackEnd - playbackStart)
+      : momentDurationMs(activeMoment, currentNarrationText);
+    const start = hasPlaybackWindow ? playbackStart : Date.now();
     const interval = window.setInterval(() => {
       const progress = Math.min((Date.now() - start) / duration, 1);
       setMomentProgress(progress);
@@ -3160,7 +3217,7 @@ export default function CinematicPage() {
       }
     }, 55);
     return () => window.clearInterval(interval);
-  }, [activeMoment, currentNarrationText, moments.length, narrationStarted, phase]);
+  }, [activeMoment, audioActivityTick, currentNarrationText, moments.length, narrationStarted, phase]);
 
   useEffect(() => {
     setMomentIndex(0);
@@ -3172,15 +3229,16 @@ export default function CinematicPage() {
     if (!narrationStarted || !sceneTurnComplete) return undefined;
     if (aiSpeaking || momentProgress < 0.96) return undefined;
 
+    const quietDelay = Math.max(0, 350 - (Date.now() - lastAudioChunkAtRef.current));
     const timer = window.setTimeout(() => {
       if (momentIndex < moments.length - 1 && pendingNarrationRef.current) {
         void cueNarration(pendingNarrationRef.current, momentIndex + 1);
         return;
       }
       enterActSummary();
-    }, heroVideoUri ? 700 : 950);
+    }, (heroVideoUri ? 700 : 950) + quietDelay);
     return () => window.clearTimeout(timer);
-  }, [aiSpeaking, cueNarration, enterActSummary, heroVideoUri, momentIndex, momentProgress, moments.length, narrationStarted, phase, sceneTurnComplete]);
+  }, [aiSpeaking, audioActivityTick, cueNarration, enterActSummary, heroVideoUri, momentIndex, momentProgress, moments.length, narrationStarted, phase, sceneTurnComplete]);
 
   useEffect(() => {
     const pendingReveal = pendingRevealRef.current;
@@ -3226,9 +3284,38 @@ export default function CinematicPage() {
   }, [currentBeatId, hydrateBeatVisuals, session?.session_id]);
 
   useEffect(() => {
+    const sessionId = session?.session_id;
+    if (!sessionId || !currentBeatId) return undefined;
+    if (!["processing", "actReveal", "acting", "actSummary"].includes(phase)) return undefined;
+
+    const expectedStoryboardCount = storyboardExpectedByBeat[currentBeatId] ?? 0;
+    const currentStoryboardCount = Object.keys(currentStoryboardAssets).length;
+    const needsStoryboard = !activeMoment?.imageSrc || !currentInterleavedRun || currentStoryboardCount < expectedStoryboardCount;
+    const needsHeroVideo = phase === "actSummary" && !heroVideoUri;
+    if (!needsStoryboard && !needsHeroVideo) return undefined;
+
+    const interval = window.setInterval(() => {
+      void hydrateBeatVisuals(sessionId, currentBeatId);
+    }, phase === "actSummary" ? 1200 : 1500);
+
+    return () => window.clearInterval(interval);
+  }, [
+    activeMoment?.imageSrc,
+    currentBeatId,
+    currentInterleavedRun,
+    currentStoryboardAssets,
+    heroVideoUri,
+    hydrateBeatVisuals,
+    phase,
+    session?.session_id,
+    storyboardExpectedByBeat,
+  ]);
+
+  useEffect(() => {
     if (phase !== "actSummary" || questionPendingRef.current) return;
+    void resetPlayback();
     setLiveOutputState(emptyTranscriptState());
-  }, [phase]);
+  }, [phase, resetPlayback]);
 
   const buildSnapshot = useCallback(() => ({
     phase,
@@ -3498,6 +3585,7 @@ export default function CinematicPage() {
             moments={moments}
             momentIndex={momentIndex}
             progress={momentProgress}
+            narrationStarted={narrationStarted}
             narrationText={currentNarrationText}
           />
           <div style={{ position: "absolute", top: "11vh", left: "4.5vw", zIndex: 30, animation: "fade-up .9s ease .2s both" }}>
