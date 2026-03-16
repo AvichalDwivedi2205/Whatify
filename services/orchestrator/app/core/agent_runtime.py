@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import os
+import threading
 from dataclasses import dataclass, field
 from json import JSONDecodeError
 from typing import Any, Protocol, TypeVar
@@ -166,27 +167,60 @@ class DeterministicAgentRuntime:
             Shot(
                 shot_id=f"{beat_spec.beat_id}_s1",
                 framing="wide establishing",
-                composition="harbor and city map table under torchlight",
+                composition="the altered city and its intellectual center under restless torchlight",
                 camera_motion="slow dolly-in",
-                prompt=f"{style}, epic historical city command room, {beat_spec.setup}",
+                prompt=(
+                    f"{style}, alternate-history epic, historically grounded establishing shot, "
+                    f"architectural scale, lived-in materials, no typography, no UI, {beat_spec.setup}"
+                ),
                 priority="high",
                 reuse_tags=["city", "command_room"],
             ),
             Shot(
                 shot_id=f"{beat_spec.beat_id}_s2",
                 framing="medium ensemble",
-                composition="council faction leaders debating over illuminated charts",
+                composition="inventors, scribes, and patrons working through the first visible change",
                 camera_motion="subtle handheld tension",
-                prompt=f"{style}, tense debate, {beat_spec.escalation}",
+                prompt=(
+                    f"{style}, historically specific workshop tableau, human action in progress, "
+                    f"rich period detail, no typography, no captions, {beat_spec.setup}"
+                ),
                 priority="medium",
-                reuse_tags=["council", "debate"],
+                reuse_tags=["workshop", "craft"],
             ),
             Shot(
                 shot_id=f"{beat_spec.beat_id}_s3",
+                framing="medium wide",
+                composition="the new idea spreading into public life with urgency and scale",
+                camera_motion="tracking lateral move",
+                prompt=(
+                    f"{style}, public consequence, crowds, motion, institutions reacting, "
+                    f"historically grounded, cinematic depth, no typography, {beat_spec.escalation}"
+                ),
+                priority="high",
+                reuse_tags=["public_square", "spread"],
+            ),
+            Shot(
+                shot_id=f"{beat_spec.beat_id}_s4",
+                framing="medium close",
+                composition="power brokers realizing the cost of the altered timeline",
+                camera_motion="measured push-in",
+                prompt=(
+                    f"{style}, elite reaction, political tension, dramatic faces, material realism, "
+                    f"no typography, no interface elements, {beat_spec.escalation}"
+                ),
+                priority="medium",
+                reuse_tags=["council", "reaction"],
+            ),
+            Shot(
+                shot_id=f"{beat_spec.beat_id}_s5",
                 framing="close-up",
-                composition="decision token placed on strategic map",
+                composition="the decisive object or gesture that crystallizes the act's consequence",
                 camera_motion="micro push-in",
-                prompt=f"{style}, decisive moment, dramatic close-up, {beat_spec.consequence_seed}",
+                prompt=(
+                    f"{style}, decisive consequence, dramatic close-up, tactile detail, high contrast, "
+                    f"historically grounded, no typography, {beat_spec.consequence_seed}"
+                ),
                 priority="high",
                 reuse_tags=["decision", "map"],
             ),
@@ -204,6 +238,29 @@ class DeterministicAgentRuntime:
         question: str | None = None,
     ) -> InterleavedGeneration:
         prompt_suffix = f"Prompt focus: {question}" if question else beat_spec.escalation
+        scene_texts = [
+            beat_spec.setup,
+            "The first proof of change becomes visible in public life and forces witnesses to react.",
+            beat_spec.escalation,
+            beat_spec.consequence_seed,
+        ]
+        blocks: list[InterleavedBlock] = []
+        for index, text in enumerate(scene_texts):
+            blocks.append(
+                InterleavedBlock(
+                    part_order=index * 2,
+                    kind="text",
+                    text=f"Scene {index + 1}. {text}",
+                )
+            )
+            blocks.append(
+                InterleavedBlock(
+                    part_order=index * 2 + 1,
+                    kind="image",
+                    uri=f"gs://whatif-synthetic/{session_id}/{beat_id}/interleaved-frame-{index + 1}.jpg",
+                    mime_type="image/jpeg",
+                )
+            )
         return InterleavedGeneration(
             run_id=stable_id("ilv", f"{session_id}:{beat_id}:{trigger.value}:{beat_index}"),
             session_id=session_id,
@@ -211,22 +268,7 @@ class DeterministicAgentRuntime:
             trigger=trigger,
             model_id="deterministic-interleaved-runtime",
             request_id=stable_id("req", f"{session_id}:{beat_id}:{trigger.value}:{prompt_suffix}"),
-            blocks=[
-                InterleavedBlock(
-                    part_order=0,
-                    kind="text",
-                    text=(
-                        f"Scene {beat_index}: {beat_spec.setup} "
-                        f"Escalation cue: {prompt_suffix}"
-                    ),
-                ),
-                InterleavedBlock(
-                    part_order=1,
-                    kind="image",
-                    uri=f"gs://whatif-synthetic/{session_id}/{beat_id}/interleaved-frame-1.jpg",
-                    mime_type="image/jpeg",
-                ),
-            ],
+            blocks=blocks,
         )
 
     async def explain(self, question: str, chain: list[TimelineEdge], beat_context: str) -> ExplainResponse:
@@ -295,18 +337,27 @@ class SafetyRewriteResponse(BaseModel):
 
 
 @dataclass(slots=True)
-class VertexAgentRuntime:
-    project: str
-    location: str
+class GeminiAgentRuntime:
+    api_key: str
     model: str
     interleaved_model: str = "gemini-3.1-flash-image-preview"
     interleaved_fallback_model: str | None = None
     max_attempts: int = 3
     retry_base_delay_seconds: float = 0.8
+    additional_api_keys: tuple[str, ...] = ()
     client: genai.Client = field(init=False, repr=False)
+    _clients: tuple[genai.Client, ...] = field(init=False, repr=False)
+    _client_lock: Any = field(init=False, repr=False)
+    _client_index: int = field(init=False, repr=False, default=0)
 
     def __post_init__(self) -> None:
-        self.client = genai.Client(vertexai=True, project=self.project, location=self.location)
+        os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "false"
+        keys = tuple(dict.fromkeys([self.api_key, *self.additional_api_keys]))
+        self._clients = tuple(genai.Client(vertexai=False, api_key=key) for key in keys if key)
+        if not self._clients:
+            raise RuntimeError("at least one Gemini API key is required")
+        self.client = self._clients[0]
+        self._client_lock = threading.Lock()
 
     async def plan_beat(
         self,
@@ -349,14 +400,18 @@ class VertexAgentRuntime:
             "style": style,
             "beat_spec": beat_spec.model_dump(mode="json"),
             "constraints": {
-                "shots_min": 2,
-                "shots_max": 3,
+                "shots_min": 3,
+                "shots_max": 5,
                 "hero_shots_max": 1,
             },
         }
         prompt = (
             "You are Shot Planner Agent. Generate cinematic shot plan JSON only. "
-            "Respect max hero shots and keep prompts production-ready for image/video models.\n"
+            "Respect max hero shots and keep prompts production-ready for image/video models. "
+            "Plan a visual progression from opening image to consequence, using 3 to 5 distinct shots. "
+            "Each prompt must be historically grounded, visually specific, and ready for image generation: "
+            "include subject, action, setting, materials, lighting, mood, camera framing or motion, and era detail. "
+            "Forbid visible typography, subtitles, UI elements, watermarks, split screens, or collage layouts.\n"
             f"INPUT:\n{json.dumps(payload, ensure_ascii=True)}"
         )
         return await self._generate_typed(prompt=prompt, schema_model=ShotPlan, temperature=0.5)
@@ -377,15 +432,23 @@ class VertexAgentRuntime:
             "beat_index": beat_index,
             "trigger": trigger.value,
             "question": question,
+            "act_title": beat_spec.act_title,
+            "act_time_label": beat_spec.act_time_label,
             "objective": beat_spec.objective,
             "setup": beat_spec.setup,
             "escalation": beat_spec.escalation,
             "consequence_seed": beat_spec.consequence_seed,
+            "narration_script": beat_spec.narration_script,
         }
         prompt = (
             "You are an interleaved cinematic storyteller. "
             "Return a single response with mixed text and image parts in temporal order. "
-            "Requirements: at least one text segment and one image segment, no JSON wrapper.\n"
+            "Requirements: no JSON wrapper. Return 3 to 5 scene movements. For each movement, output one short text segment "
+            "sized for an on-screen narration card, immediately followed by one matching image segment in temporal order. "
+            "The text should describe the exact image moment first, then the historical consequence unfolding in that same beat. "
+            "Each image must be visually distinct and depict a different stage of the act. Keep the text vivid, concrete, "
+            "and scene-first. No markdown, no headings, no meta narration, no future-act spoilers, no visible typography in images. "
+            "Never return fewer than one text segment and one image segment.\n"
             f"INPUT:\n{json.dumps(payload, ensure_ascii=True)}"
         )
 
@@ -532,7 +595,7 @@ class VertexAgentRuntime:
         schema_model: type[T],
         temperature: float,
     ) -> T:
-        response = self.client.models.generate_content(
+        response = self._next_client().models.generate_content(
             model=self.model,
             contents=prompt,
             config=types.GenerateContentConfig(
@@ -548,13 +611,19 @@ class VertexAgentRuntime:
             raise RuntimeError(f"invalid structured response: {exc}") from exc
 
     def _generate_interleaved_once(self, *, prompt: str, model_id: str) -> Any:
-        return self.client.models.generate_content(
+        return self._next_client().models.generate_content(
             model=model_id,
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.7,
             ),
         )
+
+    def _next_client(self) -> genai.Client:
+        with self._client_lock:
+            client = self._clients[self._client_index % len(self._clients)]
+            self._client_index += 1
+            return client
 
     def _should_retry(self, exc: Exception, attempt: int) -> bool:
         if attempt >= self.max_attempts:
@@ -583,7 +652,7 @@ def _extract_response_object(response: Any) -> dict[str, Any]:
 
     text = response.text or ""
     if not text:
-        raise RuntimeError("vertex response was empty")
+        raise RuntimeError("gemini response was empty")
     return _parse_json_block(text)
 
 
@@ -697,23 +766,48 @@ def _as_base64(value: str | bytes) -> str:
 
 
 def create_agent_runtime_from_env() -> AgentRuntimeProtocol:
-    project = os.getenv("GOOGLE_CLOUD_PROJECT") or os.getenv("GCLOUD_PROJECT")
-    location = os.getenv("WHATIF_VERTEX_LOCATION") or os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-    model = os.getenv("WHATIF_VERTEX_MODEL", "gemini-2.5-flash")
+    api_key, additional_api_keys = _load_api_keys_from_env()
+    model = os.getenv("WHATIF_GEMINI_MODEL") or os.getenv("WHATIF_VERTEX_MODEL", "gemini-2.5-flash")
     interleaved_model = os.getenv("WHATIF_INTERLEAVED_MODEL", "gemini-3.1-flash-image-preview")
-    interleaved_fallback_model = os.getenv("WHATIF_INTERLEAVED_FALLBACK_MODEL")
+    interleaved_fallback_model = os.getenv("WHATIF_INTERLEAVED_FALLBACK_MODEL") or "gemini-2.5-flash-image"
     max_attempts = int(os.getenv("WHATIF_AGENT_MAX_ATTEMPTS", "3"))
     retry_base_delay_seconds = float(os.getenv("WHATIF_AGENT_RETRY_BASE_DELAY_SECONDS", "0.8"))
 
-    if not project:
-        raise RuntimeError("GOOGLE_CLOUD_PROJECT must be set for Vertex agent runtime")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY or GOOGLE_API_KEY must be set for Gemini agent runtime")
 
-    return VertexAgentRuntime(
-        project=project,
-        location=location,
+    return GeminiAgentRuntime(
+        api_key=api_key,
         model=model,
         interleaved_model=interleaved_model,
         interleaved_fallback_model=interleaved_fallback_model,
         max_attempts=max_attempts,
         retry_base_delay_seconds=retry_base_delay_seconds,
+        additional_api_keys=additional_api_keys,
     )
+
+
+def _load_api_keys_from_env() -> tuple[str | None, tuple[str, ...]]:
+    keys: list[str] = []
+    primary = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    if primary:
+        keys.append(primary)
+
+    prefixed_names = sorted(
+        name
+        for name in os.environ
+        if (
+            name.startswith("GEMINI_API_KEY")
+            or name.startswith("GOOGLE_API_KEY")
+        )
+        and name not in {"GEMINI_API_KEY", "GOOGLE_API_KEY"}
+    )
+
+    for name in prefixed_names:
+        value = os.getenv(name, "").strip()
+        if value and value not in keys:
+            keys.append(value)
+
+    if not keys:
+        return None, ()
+    return keys[0], tuple(keys[1:])

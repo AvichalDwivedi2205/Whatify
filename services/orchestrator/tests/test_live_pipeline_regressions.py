@@ -40,5 +40,5 @@ async def test_start_session_does_not_block_on_interleaved_generation() -> None:
     response = await asyncio.wait_for(orchestrator.start_session(StartSessionRequest()), timeout=0.25)
 
     state = await orchestrator.repo.get_session(response.session_id)
-    assert state.mode.value == "CHOICE"
+    assert state.mode.value == "STORY"
     assert state.current_phase == "story"
