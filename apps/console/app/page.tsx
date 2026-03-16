@@ -138,6 +138,15 @@ function debugLog(event: string, details?: Record<string, unknown>) {
   console.info(`[whatify-console] ${event}`);
 }
 
+async function closeAudioContext(context: AudioContext | null | undefined): Promise<void> {
+  if (!context || context.state === "closed") return;
+  try {
+    await context.close();
+  } catch {
+    // Shutdown paths can overlap while sockets close; ignore duplicate close attempts.
+  }
+}
+
 export default function ConsolePage() {
   const [session, setSession] = useState<SessionStart | null>(null);
   const [state, setState] = useState<SessionState | null>(null);
@@ -194,7 +203,8 @@ export default function ConsolePage() {
     }
 
     if (existing) {
-      await existing.close();
+      playbackContextRef.current = null;
+      await closeAudioContext(existing);
     }
 
     const context = new AudioContext({ sampleRate });
@@ -399,33 +409,35 @@ export default function ConsolePage() {
   };
 
   const stopMic = async () => {
-    if (!liveMicOn) return;
+    if (!liveMicOn && !micAudioContextRef.current && !micStreamRef.current && !micSourceRef.current && !micProcessorRef.current) {
+      return;
+    }
 
     const ws = liveSocket.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "activity_end" }));
     }
 
-    if (micProcessorRef.current) {
-      micProcessorRef.current.disconnect();
-      micProcessorRef.current.onaudioprocess = null;
-      micProcessorRef.current = null;
+    const processor = micProcessorRef.current;
+    micProcessorRef.current = null;
+    if (processor) {
+      processor.disconnect();
+      processor.onaudioprocess = null;
     }
 
-    if (micSourceRef.current) {
-      micSourceRef.current.disconnect();
-      micSourceRef.current = null;
+    const source = micSourceRef.current;
+    micSourceRef.current = null;
+    if (source) {
+      source.disconnect();
     }
 
-    if (micAudioContextRef.current) {
-      await micAudioContextRef.current.close();
-      micAudioContextRef.current = null;
-    }
+    const context = micAudioContextRef.current;
+    micAudioContextRef.current = null;
+    await closeAudioContext(context);
 
-    if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach((track) => track.stop());
-      micStreamRef.current = null;
-    }
+    const stream = micStreamRef.current;
+    micStreamRef.current = null;
+    stream?.getTracks().forEach((track) => track.stop());
 
     setLiveMicOn(false);
     debugLog("mic:stop");
@@ -538,10 +550,9 @@ export default function ConsolePage() {
         micSourceRef.current.disconnect();
         micSourceRef.current = null;
       }
-      if (micAudioContextRef.current) {
-        void micAudioContextRef.current.close();
-        micAudioContextRef.current = null;
-      }
+      const micContext = micAudioContextRef.current;
+      micAudioContextRef.current = null;
+      void closeAudioContext(micContext);
       if (micStreamRef.current) {
         micStreamRef.current.getTracks().forEach((track) => track.stop());
         micStreamRef.current = null;
@@ -549,9 +560,9 @@ export default function ConsolePage() {
       liveSocket.current?.close();
       actionsSocket.current?.close();
       captionsSocket.current?.close();
-      if (playbackContextRef.current) {
-        void playbackContextRef.current.close();
-      }
+      const playbackContext = playbackContextRef.current;
+      playbackContextRef.current = null;
+      void closeAudioContext(playbackContext);
     };
   }, []);
 
