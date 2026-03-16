@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from urllib.parse import quote, urlparse
 from typing import cast
 
-from fastapi import APIRouter, Depends, Request, WebSocket, WebSocketDisconnect
+import httpx
+import google.auth
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 
 from app.core.orchestrator import OrchestratorService
 from app.live import LiveDirectorService
@@ -21,6 +25,7 @@ from app.models.contracts import (
     StartSessionRequest,
     StartSessionResponse,
     TimelineResponse,
+    VisualStateResponse,
 )
 
 router = APIRouter(prefix="/api/v1")
@@ -128,12 +133,70 @@ async def get_interleaved_proof(
     return await orchestrator.get_interleaved_proof(session_id=session_id, beat_id=beat_id)
 
 
+@router.get("/session/{session_id}/visual-state", response_model=VisualStateResponse)
+async def get_visual_state(
+    session_id: str,
+    beat_id: str = Query(..., min_length=1),
+    orchestrator: OrchestratorService = Depends(get_orchestrator),
+) -> VisualStateResponse:
+    return await orchestrator.get_visual_state(session_id=session_id, beat_id=beat_id)
+
+
 @router.post("/assets/jobs/callback", response_model=GenericResponse)
 async def asset_callback(
     request: AssetCallbackRequest,
     orchestrator: OrchestratorService = Depends(get_orchestrator),
 ) -> GenericResponse:
     return await orchestrator.asset_callback(request)
+
+
+@router.api_route("/assets/proxy", methods=["GET", "HEAD"])
+async def asset_proxy(request: Request, uri: str = Query(..., min_length=1)) -> Response:
+    target = uri.strip()
+    bucket = ""
+    path = ""
+    if target.startswith("gs://"):
+        bucket, _, path = target[5:].partition("/")
+    elif target.startswith("https://storage.googleapis.com/"):
+        parsed = urlparse(target)
+        storage_path = parsed.path.lstrip("/")
+        bucket, _, path = storage_path.partition("/")
+    else:
+        raise HTTPException(status_code=400, detail="unsupported asset uri")
+    if not bucket or not path:
+        raise HTTPException(status_code=400, detail="invalid asset uri")
+
+    credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/devstorage.read_only"])
+    credentials.refresh(GoogleAuthRequest())
+    target = f"https://storage.googleapis.com/storage/v1/b/{bucket}/o/{quote(path, safe='')}?alt=media"
+
+    upstream_headers = {"Authorization": f"Bearer {credentials.token}"}
+    requested_range = request.headers.get("range")
+    if requested_range:
+        upstream_headers["Range"] = requested_range
+
+    method = request.method.upper()
+    async with httpx.AsyncClient(follow_redirects=True, timeout=45.0) as client:
+        upstream = await client.request(method, target, headers=upstream_headers)
+    if upstream.status_code >= 400:
+        raise HTTPException(status_code=upstream.status_code, detail="asset fetch failed")
+
+    media_type = upstream.headers.get("content-type", "application/octet-stream")
+    response_headers = {
+        "Cache-Control": "public, max-age=3600",
+        "Access-Control-Allow-Origin": "*",
+    }
+    for header in ("accept-ranges", "content-length", "content-range", "etag", "last-modified"):
+        value = upstream.headers.get(header)
+        if value:
+            response_headers[header.title()] = value
+
+    return Response(
+        content=b"" if method == "HEAD" else upstream.content,
+        status_code=upstream.status_code,
+        media_type=media_type,
+        headers=response_headers,
+    )
 
 
 @router.post("/session/{session_id}/director-signal", response_model=GenericResponse)

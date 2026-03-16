@@ -41,6 +41,15 @@ class RepositoryProtocol(Protocol):
 
     async def get_asset(self, session_id: str, asset_id: str) -> AssetRecord | None: ...
 
+    async def list_assets_for_beat(
+        self,
+        session_id: str,
+        beat_id: str,
+        *,
+        asset_type: str | None = None,
+        status: str | None = None,
+    ) -> list[AssetRecord]: ...
+
     async def upsert_interleaved_run(self, session_id: str, record: InterleavedRunRecord) -> None: ...
 
     async def get_latest_interleaved_run(

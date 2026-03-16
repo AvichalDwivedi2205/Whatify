@@ -194,6 +194,30 @@ class GcpRepository:
             return None
         return self._decode_asset(payload)
 
+    async def list_assets_for_beat(
+        self,
+        session_id: str,
+        beat_id: str,
+        *,
+        asset_type: str | None = None,
+        status: str | None = None,
+    ) -> list[AssetRecord]:
+        docs = [doc async for doc in self._session_doc(session_id).collection("assets").stream()]
+        assets: list[AssetRecord] = []
+        for doc in docs:
+            payload = doc.to_dict()
+            if payload is None:
+                continue
+            if str(payload.get("beat_id", "")) != beat_id:
+                continue
+            if asset_type is not None and str(payload.get("type", "")) != asset_type:
+                continue
+            if status is not None and str(payload.get("status", "")) != status:
+                continue
+            assets.append(self._decode_asset(payload))
+        assets.sort(key=lambda asset: (asset.shot_id, asset.asset_id))
+        return assets
+
     async def upsert_interleaved_run(self, session_id: str, record: InterleavedRunRecord) -> None:
         payload = {
             "run_id": record.run_id,

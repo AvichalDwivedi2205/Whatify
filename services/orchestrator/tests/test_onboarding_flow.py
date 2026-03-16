@@ -28,9 +28,11 @@ async def test_begin_session_runs_first_beat_and_sets_target(orchestrator) -> No
 
     state = await orchestrator.repo.get_session(session.session_id)
     assert 4 <= state.target_beats <= 8
-    assert state.mode == Mode.CHOICE
+    assert state.mode == Mode.STORY
     beat_spec = await orchestrator.repo.get_beat_spec(session.session_id, state.beat_id)
     assert beat_spec is not None
+    context = await orchestrator.repo.get_session_context(session.session_id)
+    assert context.get("story_outline_ready") is True
 
 
 @pytest.mark.asyncio

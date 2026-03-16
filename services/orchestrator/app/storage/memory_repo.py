@@ -88,6 +88,25 @@ class InMemoryRepository(RepositoryProtocol):
         async with self._lock:
             return self._assets.get(session_id, {}).get(asset_id)
 
+    async def list_assets_for_beat(
+        self,
+        session_id: str,
+        beat_id: str,
+        *,
+        asset_type: str | None = None,
+        status: str | None = None,
+    ) -> list[AssetRecord]:
+        async with self._lock:
+            assets = list(self._assets.get(session_id, {}).values())
+
+        filtered = [asset for asset in assets if asset.beat_id == beat_id]
+        if asset_type is not None:
+            filtered = [asset for asset in filtered if asset.type.value == asset_type]
+        if status is not None:
+            filtered = [asset for asset in filtered if asset.status.value == status]
+        filtered.sort(key=lambda asset: (asset.shot_id, asset.asset_id))
+        return filtered
+
     async def upsert_interleaved_run(self, session_id: str, record: InterleavedRunRecord) -> None:
         async with self._lock:
             runs = self._interleaved_runs[session_id]

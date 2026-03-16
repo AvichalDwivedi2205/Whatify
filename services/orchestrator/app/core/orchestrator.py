@@ -35,6 +35,8 @@ from app.models.contracts import (
     TimelineEdgeResponse,
     TimelineResponse,
     UIAction,
+    VisualAssetFrame,
+    VisualStateResponse,
 )
 from app.models.enums import (
     AssetStatus,
@@ -77,6 +79,7 @@ class OrchestratorService:
         self.video_peak_beats = {2, 4, 6}
         self.interleaved_max_attempts = 4
         self.interleaved_retry_base_delay_seconds = 2.0
+        self._interleaved_generations: dict[tuple[str, str], InterleavedGeneration] = {}
         self._tasks: set[asyncio.Task[None]] = set()
 
     async def start_session(self, request: StartSessionRequest) -> StartSessionResponse:
@@ -96,7 +99,7 @@ class OrchestratorService:
             beat_index=1,
             mode=Mode.STORY if request.auto_run else Mode.ONBOARDING,
             pacing=request.pacing,
-            video_budget_remaining=3,
+            video_budget_remaining=target_beats,
             target_beats=target_beats,
             current_phase="story" if request.auto_run else "onboarding",
             awaiting_continue=False,
@@ -126,6 +129,10 @@ class OrchestratorService:
         )
 
         if request.auto_run:
+            await self._prepare_story_outline(
+                state=state,
+                divergence_point=divergence_point or "What if the Library of Alexandria never burned?",
+            )
             await self._run_beat(state)
         else:
             await self._emit_action(state, UIActionType.SET_MODE, {"mode": Mode.ONBOARDING.value})
@@ -159,6 +166,7 @@ class OrchestratorService:
         state.beat_index = 1
         state.beat_id = "beat_1"
         state.target_beats = self._compute_target_beats(divergence_point)
+        state.video_budget_remaining = state.target_beats
         state.awaiting_continue = False
         state.current_phase = "processing"
 
@@ -182,12 +190,18 @@ class OrchestratorService:
             request.pacing,
             state.target_beats,
         )
+        await self._prepare_story_outline(state=state, divergence_point=divergence_point)
         await self._run_beat(state)
         return GenericResponse(ok=True, message="session begun")
 
     async def continue_session(self, session_id: str) -> GenericResponse:
         state = await self._must_get_session(session_id)
-        logger.info("continue requested session_id=%s mode=%s beat_index=%s", session_id, state.mode.value, state.beat_index)
+        logger.info(
+            "continue requested session_id=%s mode=%s beat_index=%s",
+            session_id,
+            state.mode.value,
+            state.beat_index,
+        )
 
         if state.mode == Mode.COMPLETE:
             return GenericResponse(ok=True, message="story complete")
@@ -200,10 +214,16 @@ class OrchestratorService:
             await self._emit_action(state, UIActionType.CAPTION_APPEND, {"text": "Resuming the current act."})
             return GenericResponse(ok=True, message="resumed")
 
-        if state.mode != Mode.INTERMISSION:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="session is not waiting for continue")
+        if state.beat_index >= state.target_beats:
+            return await self._mark_story_complete(state)
 
-        state.mode = apply_transition(state.mode, TransitionCommand.CONTINUE_STORY)
+        if state.mode not in {Mode.STORY, Mode.INTERMISSION, Mode.CHOICE}:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="session is not ready to continue")
+
+        try:
+            state.mode = apply_transition(state.mode, TransitionCommand.CONTINUE_STORY)
+        except InvalidTransition:
+            state.mode = Mode.STORY
         state.awaiting_continue = False
         state.current_phase = "processing"
         state.beat_index += 1
@@ -221,7 +241,12 @@ class OrchestratorService:
         choice = next((item for item in beat_spec.choices if item.choice_id == request.choice_id), None)
         if choice is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid choice")
-        logger.info("choice selected session_id=%s beat_id=%s choice_id=%s", session_id, state.beat_id, choice.choice_id)
+        logger.info(
+            "choice selected session_id=%s beat_id=%s choice_id=%s",
+            session_id,
+            state.beat_id,
+            choice.choice_id,
+        )
 
         await self._append_event(
             state=state,
@@ -252,27 +277,21 @@ class OrchestratorService:
         )
 
         if state.beat_index >= state.target_beats:
-            try:
-                state.mode = apply_transition(state.mode, TransitionCommand.MARK_COMPLETE)
-            except InvalidTransition as exc:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-            state.current_phase = "complete"
-            state.awaiting_continue = False
-            await self.repo.upsert_session(state)
-            await self._emit_action(state, UIActionType.SET_MODE, {"mode": Mode.COMPLETE.value})
-            await self._emit_action(
+            return await self._mark_story_complete(
                 state,
-                UIActionType.CAPTION_APPEND,
-                {
-                    "text": (
-                        "Final act complete. Ask WHY/COMPARE/REWIND for post-scene analysis or start a new branch."
-                    )
-                },
+                raise_on_invalid_transition=True,
+                completion_caption=(
+                    "Final act complete. Ask WHY/COMPARE/REWIND for post-scene analysis or start a new branch."
+                ),
             )
-            return GenericResponse(ok=True, message="story complete")
 
+        transition_command = (
+            TransitionCommand.USER_CHOICE
+            if state.mode == Mode.CHOICE
+            else TransitionCommand.ENTER_INTERMISSION
+        )
         try:
-            state.mode = apply_transition(state.mode, TransitionCommand.USER_CHOICE)
+            state.mode = apply_transition(state.mode, transition_command)
         except InvalidTransition as exc:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
         state.awaiting_continue = True
@@ -411,6 +430,39 @@ class OrchestratorService:
         await self._emit_action(state, UIActionType.SET_MODE, {"mode": Mode.EXPLAIN.value})
         await self._emit_action(state, UIActionType.CAPTION_APPEND, {"text": answer_text})
 
+        await self._restore_mode_after_interrupt(session_id=session_id, state=state, prior_mode=prior_mode)
+
+        return GenericResponse(ok=True, message="interrupt handled")
+
+    async def _mark_story_complete(
+        self,
+        state: SessionHotState,
+        *,
+        raise_on_invalid_transition: bool = False,
+        completion_caption: str | None = None,
+    ) -> GenericResponse:
+        try:
+            state.mode = apply_transition(state.mode, TransitionCommand.MARK_COMPLETE)
+        except InvalidTransition as exc:
+            if raise_on_invalid_transition:
+                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+            state.mode = Mode.COMPLETE
+
+        state.current_phase = "complete"
+        state.awaiting_continue = False
+        await self.repo.upsert_session(state)
+        await self._emit_action(state, UIActionType.SET_MODE, {"mode": Mode.COMPLETE.value})
+        if completion_caption:
+            await self._emit_action(state, UIActionType.CAPTION_APPEND, {"text": completion_caption})
+        return GenericResponse(ok=True, message="story complete")
+
+    async def _restore_mode_after_interrupt(
+        self,
+        *,
+        session_id: str,
+        state: SessionHotState,
+        prior_mode: Mode,
+    ) -> None:
         if prior_mode == Mode.CHOICE:
             state.mode = Mode.CHOICE
             await self.repo.upsert_session(state)
@@ -421,24 +473,12 @@ class OrchestratorService:
                     UIActionType.SHOW_CHOICES,
                     {"choices": [choice.model_dump(mode="json") for choice in beat_spec.choices]},
                 )
-        elif prior_mode == Mode.INTERMISSION:
-            state.mode = Mode.INTERMISSION
-            await self.repo.upsert_session(state)
-            await self._emit_action(state, UIActionType.SET_MODE, {"mode": Mode.INTERMISSION.value})
-        elif prior_mode == Mode.ONBOARDING:
-            state.mode = Mode.ONBOARDING
-            await self.repo.upsert_session(state)
-            await self._emit_action(state, UIActionType.SET_MODE, {"mode": Mode.ONBOARDING.value})
-        elif prior_mode == Mode.COMPLETE:
-            state.mode = Mode.COMPLETE
-            await self.repo.upsert_session(state)
-            await self._emit_action(state, UIActionType.SET_MODE, {"mode": Mode.COMPLETE.value})
-        else:
-            state.mode = Mode.STORY
-            await self.repo.upsert_session(state)
-            await self._emit_action(state, UIActionType.SET_MODE, {"mode": Mode.STORY.value})
+            return
 
-        return GenericResponse(ok=True, message="interrupt handled")
+        restored_mode = prior_mode if prior_mode in {Mode.INTERMISSION, Mode.ONBOARDING, Mode.COMPLETE} else Mode.STORY
+        state.mode = restored_mode
+        await self.repo.upsert_session(state)
+        await self._emit_action(state, UIActionType.SET_MODE, {"mode": restored_mode.value})
 
     async def asset_explain(self, session_id: str, request: AssetExplainRequest) -> GenericResponse:
         state = await self._must_get_session(session_id)
@@ -531,6 +571,10 @@ class OrchestratorService:
         if run is None:
             return InterleavedProofResponse(session_id=session_id, beat_id=beat_id, run=None)
 
+        cached = self._interleaved_generations.get((session_id, run.beat_id))
+        if cached is not None and cached.run_id == run.run_id:
+            return InterleavedProofResponse(session_id=session_id, beat_id=run.beat_id, run=cached)
+
         return InterleavedProofResponse(
             session_id=session_id,
             beat_id=run.beat_id,
@@ -558,6 +602,38 @@ class OrchestratorService:
                     for block in run.blocks
                 ],
             ),
+        )
+
+    async def get_visual_state(self, session_id: str, beat_id: str) -> VisualStateResponse:
+        await self._must_get_session(session_id)
+        proof = await self.get_interleaved_proof(session_id=session_id, beat_id=beat_id)
+        storyboard_assets = await self.repo.list_assets_for_beat(
+            session_id,
+            beat_id,
+            asset_type=AssetType.STORYBOARD.value,
+            status=AssetStatus.READY.value,
+        )
+        hero_assets = await self.repo.list_assets_for_beat(
+            session_id,
+            beat_id,
+            asset_type=AssetType.HERO_VIDEO.value,
+            status=AssetStatus.READY.value,
+        )
+        return VisualStateResponse(
+            session_id=session_id,
+            beat_id=beat_id,
+            storyboard_frames=[
+                VisualAssetFrame(
+                    asset_id=asset.asset_id,
+                    shot_id=asset.shot_id,
+                    uri=asset.uri,
+                    ready=True,
+                )
+                for asset in storyboard_assets
+                if asset.uri
+            ],
+            hero_video_uri=hero_assets[0].uri if hero_assets else None,
+            interleaved_run=proof.run,
         )
 
     async def handle_director_signal(self, session_id: str, request: DirectorSignalRequest) -> GenericResponse:
@@ -651,8 +727,10 @@ class OrchestratorService:
 
         if request.status == AssetStatus.READY:
             if record.type == AssetType.STORYBOARD:
-                await self._append_event(
-                    state=state,
+                await self._append_event_by_scope(
+                    session_id=state.session_id,
+                    branch_id=state.branch_id,
+                    beat_id=record.beat_id,
                     event_type=EventType.STORYBOARD_READY,
                     payload={"asset_id": record.asset_id, "shot_id": record.shot_id},
                     links=EventLinks(asset_ids=[record.asset_id]),
@@ -661,6 +739,7 @@ class OrchestratorService:
                     state,
                     UIActionType.SHOW_STORYBOARD,
                     {
+                        "beat_id": record.beat_id,
                         "frames": [
                             {
                                 "asset_id": record.asset_id,
@@ -672,8 +751,10 @@ class OrchestratorService:
                     },
                 )
             elif record.type == AssetType.HERO_VIDEO:
-                await self._append_event(
-                    state=state,
+                await self._append_event_by_scope(
+                    session_id=state.session_id,
+                    branch_id=state.branch_id,
+                    beat_id=record.beat_id,
                     event_type=EventType.VIDEO_READY,
                     payload={"asset_id": record.asset_id, "shot_id": record.shot_id},
                     links=EventLinks(asset_ids=[record.asset_id]),
@@ -681,7 +762,12 @@ class OrchestratorService:
                 await self._emit_action(
                     state,
                     UIActionType.PLAY_VIDEO,
-                    {"uri": record.uri, "shot_id": record.shot_id, "asset_id": record.asset_id},
+                    {
+                        "beat_id": record.beat_id,
+                        "uri": record.uri,
+                        "shot_id": record.shot_id,
+                        "asset_id": record.asset_id,
+                    },
                 )
 
         return GenericResponse(ok=True, message="asset callback processed")
@@ -690,27 +776,30 @@ class OrchestratorService:
         state.current_phase = "processing"
         state.awaiting_continue = False
         await self.repo.upsert_session(state)
-        logger.info("run beat started session_id=%s beat_id=%s beat_index=%s", state.session_id, state.beat_id, state.beat_index)
+        logger.info(
+            "run beat started session_id=%s beat_id=%s beat_index=%s",
+            state.session_id,
+            state.beat_id,
+            state.beat_index,
+        )
 
-        context = await build_working_memory(self.repo, state.session_id)
-        beat_spec = await self.agents.plan_beat(
+        beat_spec = await self.repo.get_beat_spec(state.session_id, state.beat_id)
+        if beat_spec is None:
+            context = await build_working_memory(self.repo, state.session_id)
+            beat_spec = await self.agents.plan_beat(
+                session_id=state.session_id,
+                beat_id=state.beat_id,
+                beat_index=state.beat_index,
+                context=context,
+            )
+            beat_spec = await self._sanitize_beat_spec(beat_spec)
+            await self.repo.set_beat_spec(state.session_id, state.beat_id, beat_spec)
+
+        shot_plan = await self._load_or_plan_shot_plan(
             session_id=state.session_id,
             beat_id=state.beat_id,
-            beat_index=state.beat_index,
-            context=context,
+            beat_spec=beat_spec,
         )
-        beat_spec.setup = await self.agents.safety_rewrite(beat_spec.setup)
-        beat_spec.escalation = await self.agents.safety_rewrite(beat_spec.escalation)
-
-        consistency = await self.agents.check_consistency(beat_spec)
-        for fix in consistency.fixes:
-            if fix.field == "setup":
-                beat_spec.setup = fix.replacement
-            if fix.field == "escalation":
-                beat_spec.escalation = fix.replacement
-
-        shot_plan = await self.agents.plan_shots(beat_spec)
-        await self.repo.set_beat_spec(state.session_id, state.beat_id, beat_spec)
         logger.info(
             "beat planned session_id=%s beat_id=%s choices=%s shots=%s hero_shots=%s",
             state.session_id,
@@ -739,6 +828,10 @@ class OrchestratorService:
             payload={"shots": len(shot_plan.shots), "hero_shots": len(shot_plan.hero_shots)},
         )
 
+        state.mode = Mode.STORY
+        state.current_phase = "story"
+        state.awaiting_continue = state.beat_index < state.target_beats
+        await self.repo.upsert_session(state)
         await self._emit_action(state, UIActionType.SET_MODE, {"mode": Mode.STORY.value})
         await self._emit_action(
             state,
@@ -780,28 +873,22 @@ class OrchestratorService:
             state,
             UIActionType.SHOW_STORYBOARD,
             {
+                "beat_id": state.beat_id,
                 "frames": [
                     {"shot_id": shot.shot_id, "ready": False, "uri": None}
                     for shot in shot_plan.shots
                 ]
             },
         )
-
-        await self.caption_bus.emit(state.session_id, beat_spec.setup)
-        await self._emit_action(state, UIActionType.CAPTION_APPEND, {"text": beat_spec.escalation})
-
-        await self._dispatch_asset_jobs(state, shot_plan)
-
-        try:
-            state.mode = apply_transition(state.mode, TransitionCommand.READY_FOR_CHOICES)
-        except InvalidTransition as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-
-        await self.repo.upsert_session(state)
-        state.current_phase = "story"
-        await self.repo.upsert_session(state)
-        await self._show_choices(state, beat_spec)
-        logger.info("run beat ready session_id=%s beat_id=%s mode=%s", state.session_id, state.beat_id, state.mode.value)
+        await self._dispatch_asset_jobs(state, beat_id=state.beat_id, shot_plan=shot_plan)
+        if state.beat_index < state.target_beats:
+            self._track_task(asyncio.create_task(self._prefetch_next_beat(state)))
+        logger.info(
+            "run beat ready session_id=%s beat_id=%s mode=%s",
+            state.session_id,
+            state.beat_id,
+            state.mode.value,
+        )
 
     async def _show_choices(self, state: SessionHotState, beat_spec: BeatSpec) -> None:
         await self._append_event(
@@ -815,15 +902,18 @@ class OrchestratorService:
             {"choices": [choice.model_dump(mode="json") for choice in beat_spec.choices]},
         )
 
-    async def _dispatch_asset_jobs(self, state: SessionHotState, shot_plan: ShotPlan) -> None:
+    async def _dispatch_asset_jobs(self, state: SessionHotState, *, beat_id: str, shot_plan: ShotPlan) -> None:
         for shot in shot_plan.shots:
-            asset_id = stable_id("asset", f"{state.session_id}:{state.beat_id}:{shot.shot_id}:img")
+            asset_id = stable_id("asset", f"{state.session_id}:{beat_id}:{shot.shot_id}:img")
+            existing = await self.repo.get_asset(state.session_id, asset_id)
+            if existing is not None:
+                continue
             job = AssetJob(
                 job_id=stable_id("job", asset_id),
                 type=AssetType.STORYBOARD,
                 session_id=state.session_id,
                 branch_id=state.branch_id,
-                beat_id=state.beat_id,
+                beat_id=beat_id,
                 shot_id=shot.shot_id,
                 prompt=shot.prompt,
             )
@@ -834,15 +924,17 @@ class OrchestratorService:
                     type=AssetType.STORYBOARD,
                     session_id=state.session_id,
                     branch_id=state.branch_id,
-                    beat_id=state.beat_id,
+                    beat_id=beat_id,
                     shot_id=shot.shot_id,
                     prompt_hash=hash_prompt(shot.prompt),
                     status=AssetStatus.PENDING,
                     reuse_tags=shot.reuse_tags,
                 ),
             )
-            await self._append_event(
-                state=state,
+            await self._append_event_by_scope(
+                session_id=state.session_id,
+                branch_id=state.branch_id,
+                beat_id=beat_id,
                 event_type=EventType.STORYBOARD_JOB_STARTED,
                 payload={"job_id": job.job_id, "shot_id": shot.shot_id},
                 links=EventLinks(asset_ids=[asset_id]),
@@ -850,26 +942,26 @@ class OrchestratorService:
             logger.info(
                 "storyboard job queued session_id=%s beat_id=%s shot_id=%s asset_id=%s",
                 state.session_id,
-                state.beat_id,
+                beat_id,
                 shot.shot_id,
                 asset_id,
             )
             self._track_task(asyncio.create_task(self._dispatch_asset_job(asset_id=asset_id, job=job)))
 
-        should_render_video = (
-            state.beat_index in self._video_peak_beats(state.target_beats)
-            and state.video_budget_remaining > 0
-        )
+        should_render_video = state.video_budget_remaining > 0
         if should_render_video and shot_plan.hero_shots:
             hero = shot_plan.hero_shots[0]
-            asset_id = stable_id("asset", f"{state.session_id}:{state.beat_id}:{hero.shot_id}:vid")
+            asset_id = stable_id("asset", f"{state.session_id}:{beat_id}:{hero.shot_id}:vid")
+            existing = await self.repo.get_asset(state.session_id, asset_id)
+            if existing is not None:
+                return
             job = AssetJob(
                 job_id=stable_id("job", asset_id),
                 type=AssetType.HERO_VIDEO,
                 priority="high",
                 session_id=state.session_id,
                 branch_id=state.branch_id,
-                beat_id=state.beat_id,
+                beat_id=beat_id,
                 shot_id=hero.shot_id,
                 prompt=hero.prompt,
                 deadline_ms=18000,
@@ -881,7 +973,7 @@ class OrchestratorService:
                     type=AssetType.HERO_VIDEO,
                     session_id=state.session_id,
                     branch_id=state.branch_id,
-                    beat_id=state.beat_id,
+                    beat_id=beat_id,
                     shot_id=hero.shot_id,
                     prompt_hash=hash_prompt(hero.prompt),
                     status=AssetStatus.PENDING,
@@ -890,8 +982,10 @@ class OrchestratorService:
             )
             state.video_budget_remaining -= 1
             await self.repo.upsert_session(state)
-            await self._append_event(
-                state=state,
+            await self._append_event_by_scope(
+                session_id=state.session_id,
+                branch_id=state.branch_id,
+                beat_id=beat_id,
                 event_type=EventType.VIDEO_JOB_STARTED,
                 payload={"job_id": job.job_id, "shot_id": hero.shot_id},
                 links=EventLinks(asset_ids=[asset_id]),
@@ -899,11 +993,122 @@ class OrchestratorService:
             logger.info(
                 "video job queued session_id=%s beat_id=%s shot_id=%s asset_id=%s",
                 state.session_id,
-                state.beat_id,
+                beat_id,
                 hero.shot_id,
                 asset_id,
             )
             self._track_task(asyncio.create_task(self._dispatch_asset_job(asset_id=asset_id, job=job)))
+
+    async def _prepare_story_outline(self, *, state: SessionHotState, divergence_point: str) -> None:
+        context = await self.repo.get_session_context(state.session_id)
+        if context.get("story_outline_ready"):
+            return
+
+        planned_beat_ids: list[str] = []
+        planned_shot_plans: dict[str, Any] = {}
+        branch_rules: list[dict[str, Any]] = []
+        active_entities: list[str] = []
+        summary_lines: list[list[str]] = []
+
+        for beat_index in range(1, state.target_beats + 1):
+            beat_id = f"beat_{beat_index}"
+            beat_spec = await self.agents.plan_beat(
+                session_id=state.session_id,
+                beat_id=beat_id,
+                beat_index=beat_index,
+                context={
+                    "current_beat_objective": f"Beat {beat_index} progression",
+                    "active_entities": active_entities[:5],
+                    "branch_rules": branch_rules[-5:],
+                    "last_beat_summaries": summary_lines[-2:],
+                    "tone": state.user_tone,
+                    "divergence_point": divergence_point,
+                },
+            )
+            beat_spec = await self._sanitize_beat_spec(beat_spec)
+            shot_plan = await self.agents.plan_shots(beat_spec)
+            await self.repo.set_beat_spec(state.session_id, beat_id, beat_spec)
+            planned_beat_ids.append(beat_id)
+            planned_shot_plans[beat_id] = shot_plan.model_dump(mode="json")
+            branch_rules.extend([update.model_dump(mode="json") for update in beat_spec.branch_rule_updates])
+            active_entities = beat_spec.active_entities
+            summary_lines.append(
+                [
+                    beat_spec.objective,
+                    beat_spec.setup,
+                    beat_spec.escalation,
+                    beat_spec.consequence_seed,
+                    beat_spec.transition_hook,
+                ]
+            )
+
+        await self.repo.set_session_context(
+            state.session_id,
+            {
+                "branch_rules": branch_rules[-12:],
+                "planned_beat_ids": planned_beat_ids,
+                "planned_shot_plans": planned_shot_plans,
+                "story_outline_ready": True,
+            },
+        )
+
+    async def _sanitize_beat_spec(self, beat_spec: BeatSpec) -> BeatSpec:
+        beat_spec.setup = await self.agents.safety_rewrite(beat_spec.setup)
+        beat_spec.escalation = await self.agents.safety_rewrite(beat_spec.escalation)
+        consistency = await self.agents.check_consistency(beat_spec)
+        for fix in consistency.fixes:
+            if fix.field == "setup":
+                beat_spec.setup = fix.replacement
+            if fix.field == "escalation":
+                beat_spec.escalation = fix.replacement
+        return beat_spec
+
+    async def _load_or_plan_shot_plan(
+        self,
+        *,
+        session_id: str,
+        beat_id: str,
+        beat_spec: BeatSpec,
+    ) -> ShotPlan:
+        context = await self.repo.get_session_context(session_id)
+        planned_shot_plans = context.get("planned_shot_plans", {})
+        raw_plan = planned_shot_plans.get(beat_id) if isinstance(planned_shot_plans, dict) else None
+        if isinstance(raw_plan, dict):
+            return ShotPlan.model_validate(raw_plan)
+
+        shot_plan = await self.agents.plan_shots(beat_spec)
+        planned_shot_plans = dict(planned_shot_plans) if isinstance(planned_shot_plans, dict) else {}
+        planned_shot_plans[beat_id] = shot_plan.model_dump(mode="json")
+        await self.repo.set_session_context(session_id, {"planned_shot_plans": planned_shot_plans})
+        return shot_plan
+
+    async def _prefetch_next_beat(self, state: SessionHotState) -> None:
+        next_beat_index = state.beat_index + 1
+        if next_beat_index > state.target_beats:
+            return
+
+        next_beat_id = f"beat_{next_beat_index}"
+        beat_spec = await self.repo.get_beat_spec(state.session_id, next_beat_id)
+        if beat_spec is None:
+            return
+
+        shot_plan = await self._load_or_plan_shot_plan(
+            session_id=state.session_id,
+            beat_id=next_beat_id,
+            beat_spec=beat_spec,
+        )
+        interleaved = await self.repo.get_latest_interleaved_run(state.session_id, beat_id=next_beat_id)
+        if interleaved is None:
+            await self._generate_interleaved_for_beat(
+                session_id=state.session_id,
+                branch_id=state.branch_id,
+                beat_id=next_beat_id,
+                beat_index=next_beat_index,
+                beat_spec=beat_spec,
+                trigger=InterleavedTrigger.BEAT_START,
+                question=None,
+            )
+        await self._dispatch_asset_jobs(state, beat_id=next_beat_id, shot_plan=shot_plan)
 
     async def _dispatch_asset_job(self, asset_id: str, job: AssetJob) -> None:
         try:
@@ -1072,6 +1277,17 @@ class OrchestratorService:
                 },
             )
             return
+
+        self._interleaved_generations[(session_id, beat_id)] = InterleavedGeneration(
+            run_id=run_record.run_id,
+            session_id=session_id,
+            beat_id=beat_id,
+            trigger=generation.trigger,
+            model_id=generation.model_id,
+            request_id=generation.request_id,
+            ts=generation.ts,
+            blocks=sorted_blocks,
+        )
 
         await self._append_event_by_scope(
             session_id=session_id,
@@ -1277,14 +1493,7 @@ class OrchestratorService:
         if connector_hits >= 3:
             score += 1
 
-        return max(4, min(8, 4 + score))
-
-    @staticmethod
-    def _video_peak_beats(target_beats: int) -> set[int]:
-        # Keep three cinematic peaks regardless of adaptive run length.
-        first = max(2, round(target_beats * 0.33))
-        second = max(first + 1, round(target_beats * 0.66))
-        return {first, second, target_beats}
+        return max(4, min(6, 4 + score))
 
     def _build_beat_summary(self, beat_spec: BeatSpec, choice_id: str) -> BeatSummary:
         lines = [

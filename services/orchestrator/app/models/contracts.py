@@ -266,6 +266,21 @@ class InterleavedProofResponse(BaseModel):
     run: InterleavedGeneration | None = None
 
 
+class VisualAssetFrame(BaseModel):
+    asset_id: str
+    shot_id: str
+    uri: str | None = None
+    ready: bool = True
+
+
+class VisualStateResponse(BaseModel):
+    session_id: str
+    beat_id: str
+    storyboard_frames: list[VisualAssetFrame] = Field(default_factory=list)
+    hero_video_uri: str | None = None
+    interleaved_run: InterleavedGeneration | None = None
+
+
 class AssetCallbackRequest(BaseModel):
     asset_id: str
     session_id: str
