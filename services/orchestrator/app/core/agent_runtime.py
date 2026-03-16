@@ -382,10 +382,13 @@ class GeminiAgentRuntime:
         }
         prompt = (
             "You are Story Planner for WhatIf. Output ONLY valid JSON matching BeatSpec. "
-            "No markdown. No additional keys. Keep language cinematic but concise.\n"
+            "No markdown. No additional keys. Keep language cinematic but concise. "
+            "Beat 1 establishes the altered world. Every later beat must continue directly from the previous beat's "
+            "transition hook, unresolved consequence, and active entities. Do not reset the timeline, replay the original "
+            "divergence as if it just happened, or repeat the previous beat's opening image in new words.\n"
             f"INPUT:\n{json.dumps(payload, ensure_ascii=True)}"
         )
-        return await self._generate_typed(prompt=prompt, schema_model=BeatSpec, temperature=0.6)
+        return await self._generate_typed(prompt=prompt, schema_model=BeatSpec, temperature=0.45)
 
     async def check_consistency(self, beat_spec: BeatSpec) -> ConsistencyReport:
         prompt = (
@@ -447,7 +450,9 @@ class GeminiAgentRuntime:
             "sized for an on-screen narration card, immediately followed by one matching image segment in temporal order. "
             "The text should describe the exact image moment first, then the historical consequence unfolding in that same beat. "
             "Each image must be visually distinct and depict a different stage of the act. Keep the text vivid, concrete, "
-            "and scene-first. No markdown, no headings, no meta narration, no future-act spoilers, no visible typography in images. "
+            "and scene-first. Continue from the current beat's consequence chain instead of re-explaining the timeline from scratch. "
+            "Avoid repeated phrases or duplicated scene openings across consecutive blocks. "
+            "No markdown, no headings, no meta narration, no future-act spoilers, no visible typography in images. "
             "Never return fewer than one text segment and one image segment.\n"
             f"INPUT:\n{json.dumps(payload, ensure_ascii=True)}"
         )

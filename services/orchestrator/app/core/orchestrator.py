@@ -1009,6 +1009,7 @@ class OrchestratorService:
         branch_rules: list[dict[str, Any]] = []
         active_entities: list[str] = []
         summary_lines: list[list[str]] = []
+        previous_beat: BeatSpec | None = None
 
         for beat_index in range(1, state.target_beats + 1):
             beat_id = f"beat_{beat_index}"
@@ -1017,10 +1018,18 @@ class OrchestratorService:
                 beat_id=beat_id,
                 beat_index=beat_index,
                 context={
-                    "current_beat_objective": f"Beat {beat_index} progression",
+                    "current_beat_objective": (
+                        previous_beat.transition_hook
+                        if previous_beat is not None
+                        else f"Establish the first irreversible consequence of {divergence_point}"
+                    ),
                     "active_entities": active_entities[:5],
                     "branch_rules": branch_rules[-5:],
                     "last_beat_summaries": summary_lines[-2:],
+                    "previous_act_title": previous_beat.act_title if previous_beat is not None else "",
+                    "previous_act_time_label": previous_beat.act_time_label if previous_beat is not None else "",
+                    "previous_transition_hook": previous_beat.transition_hook if previous_beat is not None else "",
+                    "rolling_story_summary": summary_lines[-4:],
                     "tone": state.user_tone,
                     "divergence_point": divergence_point,
                 },
@@ -1041,6 +1050,7 @@ class OrchestratorService:
                     beat_spec.transition_hook,
                 ]
             )
+            previous_beat = beat_spec
 
         await self.repo.set_session_context(
             state.session_id,
