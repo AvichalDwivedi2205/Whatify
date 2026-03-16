@@ -927,18 +927,22 @@ function OnboardingScreen({
   theme,
   aiLine,
   onMicStart,
+  onMicStop,
   listening,
   liveConnected,
   introPlaying,
   handoffPlaying,
+  capturedPrompt,
 }: {
   theme: ActTheme;
   aiLine: string;
   onMicStart: () => void;
+  onMicStop: () => void;
   listening: boolean;
   liveConnected: boolean;
   introPlaying: boolean;
   handoffPlaying: boolean;
+  capturedPrompt: string;
 }) {
   return (
     <div
@@ -991,7 +995,7 @@ function OnboardingScreen({
                 maxWidth: 440,
               }}
             >
-              Tap speak, say the one moment where history changes, then pause.
+              Tap speak, say the one moment where history changes, then press done.
             </p>
             <div
               style={{
@@ -1030,6 +1034,24 @@ function OnboardingScreen({
               label={introPlaying ? "Intro" : handoffPlaying ? "Opening" : listening ? "Listening" : "Speak"}
               accent={theme.accent}
             />
+            {listening ? (
+              <button
+                onClick={onMicStop}
+                style={{
+                  border: `1px solid rgba(${theme.rgb},.26)`,
+                  background: theme.accent,
+                  color: "#060504",
+                  padding: "12px 18px",
+                  fontFamily: "'Cinzel',serif",
+                  fontSize: 10,
+                  letterSpacing: ".28em",
+                  textTransform: "uppercase",
+                  cursor: "pointer",
+                }}
+              >
+                Done Speaking
+              </button>
+            ) : null}
             <div style={{ display: "flex", alignItems: "center", gap: 4, height: 36 }}>
               {WAVE_HEIGHTS.map((height, index) => (
                 <div
@@ -1062,13 +1084,52 @@ function OnboardingScreen({
               }}
             >
               {listening
-                ? "Listening to your microphone. State the divergence once, then pause."
+                ? "Listening to your microphone. Press Done Speaking only when you want the story to begin."
                 : introPlaying
                   ? "The cinematic intro is speaking."
                   : handoffPlaying
                     ? "Opening the story while the timeline is being built."
                     : "Nothing starts until you speak."}
             </div>
+            {capturedPrompt ? (
+              <div
+                style={{
+                  width: "min(500px,100%)",
+                  minHeight: 72,
+                  maxHeight: 126,
+                  overflowY: "auto",
+                  padding: "14px 16px",
+                  border: `1px solid rgba(${theme.rgb},.16)`,
+                  background: "rgba(255,255,255,.02)",
+                  boxShadow: "inset 0 1px 0 rgba(255,255,255,.03)",
+                }}
+              >
+                <div
+                  style={{
+                    fontFamily: "'Raleway',sans-serif",
+                    fontWeight: 200,
+                    fontSize: 10,
+                    letterSpacing: ".28em",
+                    color: `rgba(${theme.rgb},.46)`,
+                    textTransform: "uppercase",
+                    marginBottom: 8,
+                  }}
+                >
+                  Captured Divergence
+                </div>
+                <div
+                  style={{
+                    fontFamily: "'EB Garamond',serif",
+                    fontStyle: "italic",
+                    fontSize: 18,
+                    lineHeight: 1.55,
+                    color: "rgba(242,234,214,.8)",
+                  }}
+                >
+                  {capturedPrompt}
+                </div>
+              </div>
+            ) : null}
             <div
               style={{
                 fontFamily: "'Raleway',sans-serif",
@@ -1590,13 +1651,15 @@ function SummaryCard({
   questionDraft,
   setQuestionDraft,
   onAsk,
-  onVoiceAsk,
+  onVoiceAskStart,
+  onVoiceAskStop,
   onContinue,
   onReplayAct,
   onReplayMoment,
   qaEntries,
   asking,
   listening,
+  voiceDraft,
   liveConnected,
   latestLine,
 }: {
@@ -1608,13 +1671,15 @@ function SummaryCard({
   questionDraft: string;
   setQuestionDraft: (value: string) => void;
   onAsk: () => void;
-  onVoiceAsk: () => void;
+  onVoiceAskStart: () => void;
+  onVoiceAskStop: () => void;
   onContinue: () => void;
   onReplayAct: () => void;
   onReplayMoment: (index: number) => void;
   qaEntries: QuestionEntry[];
   asking: boolean;
   listening: boolean;
+  voiceDraft: string;
   liveConnected: boolean;
   latestLine: string;
 }) {
@@ -1860,7 +1925,7 @@ function SummaryCard({
               <Orb
                 size="medium"
                 listening={listening}
-                onClick={asking ? undefined : onVoiceAsk}
+                onClick={asking || listening ? undefined : onVoiceAskStart}
                 label={listening ? "Listening" : "Ask Aloud"}
                 accent={theme.accent}
               />
@@ -1879,7 +1944,9 @@ function SummaryCard({
                   scrollbarWidth: "thin",
                 }}
               >
-                {latestLine || "Use the orb to ask Gemini Live about the current act before moving on."}
+                {listening
+                  ? (voiceDraft || "Listening now. Press Done Asking when you want Gemini Live to answer.")
+                  : latestLine || "Use the orb to ask Gemini Live about the current act before moving on."}
               </div>
               <div
                 style={{
@@ -1891,8 +1958,27 @@ function SummaryCard({
                   textTransform: "uppercase",
                 }}
               >
-                {liveConnected ? "Live voice ready for follow-up" : "Reconnecting live voice"}
+                {listening ? "Press Done Asking to submit your voice question" : liveConnected ? "Live voice ready for follow-up" : "Reconnecting live voice"}
               </div>
+              {listening ? (
+                <button
+                  onClick={onVoiceAskStop}
+                  style={{
+                    marginTop: 12,
+                    border: `1px solid rgba(${theme.rgb},.24)`,
+                    background: theme.accent,
+                    color: "#060504",
+                    padding: "10px 14px",
+                    fontFamily: "'Cinzel',serif",
+                    fontSize: 10,
+                    letterSpacing: ".24em",
+                    textTransform: "uppercase",
+                    cursor: "pointer",
+                  }}
+                >
+                  Done Asking
+                </button>
+              ) : null}
             </div>
           </div>
           <AskPanel theme={theme} value={questionDraft} onChange={setQuestionDraft} onSubmit={onAsk} disabled={asking} />
@@ -2106,6 +2192,9 @@ export default function CinematicPage() {
   const onboardingIntroRetryCountRef = useRef(0);
   const onboardingIntroPendingRef = useRef(false);
   const onboardingSpeechDetectedRef = useRef(false);
+  const onboardingWelcomeResponseReceivedRef = useRef(false);
+  const onboardingHandoffResponseReceivedRef = useRef(false);
+  const onboardingHandoffCompleteRef = useRef(false);
   const onboardingHandoffRef = useRef(false);
   const onboardingRecognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const onboardingRecognitionActiveRef = useRef(false);
@@ -2375,6 +2464,9 @@ export default function CinematicPage() {
     onboardingIntroRetryCountRef.current = 0;
     onboardingIntroPendingRef.current = false;
     onboardingSpeechDetectedRef.current = false;
+    onboardingWelcomeResponseReceivedRef.current = false;
+    onboardingHandoffResponseReceivedRef.current = false;
+    onboardingHandoffCompleteRef.current = false;
     onboardingRecognitionFinalRef.current = "";
     onboardingRecognitionTextRef.current = "";
     onboardingRecognitionSubmittedRef.current = false;
@@ -2468,6 +2560,7 @@ export default function CinematicPage() {
     const liveSocketCurrent = socket;
     if (!liveSocketCurrent || liveSocketCurrent.readyState !== WebSocket.OPEN) return;
     if (!options?.isRetry && onboardingGreetingSentRef.current) return;
+    if (!options?.isRetry) onboardingWelcomeResponseReceivedRef.current = false;
     onboardingGreetingSentRef.current = true;
     onboardingIntroPendingRef.current = true;
     setOnboardingHandoff(false);
@@ -2487,6 +2580,7 @@ export default function CinematicPage() {
         || liveMicOnRef.current
         || aiSpeaking
         || !onboardingIntroPendingRef.current
+        || onboardingWelcomeResponseReceivedRef.current
       ) {
         return;
       }
@@ -2562,29 +2656,6 @@ export default function CinematicPage() {
       const currentSocket = liveSocket.current;
       if (!currentSocket || currentSocket.readyState !== WebSocket.OPEN) return;
       const samples = event.inputBuffer.getChannelData(0);
-      if (phaseRef.current === "onboarding") {
-        let energy = 0;
-        for (let index = 0; index < samples.length; index += 1) energy += Math.abs(samples[index]);
-        const average = energy / samples.length;
-        const speaking = average > 0.018;
-        if (speaking) {
-          onboardingSpeechDetectedRef.current = true;
-          clearTimeoutRef(onboardingSilenceTimerRef);
-        } else if (
-          onboardingSpeechDetectedRef.current
-          && onboardingSilenceTimerRef.current === null
-          && !onboardingRecognitionSubmittedRef.current
-        ) {
-          onboardingSilenceTimerRef.current = window.setTimeout(() => {
-            onboardingSilenceTimerRef.current = null;
-            const finalPrompt = onboardingRecognitionTextRef.current.trim();
-            if (!finalPrompt || onboardingRecognitionSubmittedRef.current || phaseRef.current !== "onboarding") return;
-            onboardingRecognitionSubmittedRef.current = true;
-            void stopMic();
-            void beginFromPromptRef.current?.(finalPrompt);
-          }, 950);
-        }
-      }
       const pcm = downsampleTo16k(samples, audioContext.sampleRate);
       currentSocket.send(pcm.buffer);
     };
@@ -2598,7 +2669,7 @@ export default function CinematicPage() {
     socket.send(JSON.stringify({ type: "activity_start" }));
     setLiveMicOn(true);
     debugLog("mic:start");
-  }, [aiSpeaking, clearOnboardingTimers, startOnboardingRecognition, stopMic, stopOnboardingCapture]);
+  }, [aiSpeaking, clearOnboardingTimers, startOnboardingRecognition, stopOnboardingCapture]);
 
   const handleLiveMessage = useCallback(async (data: string) => {
     let message: LiveMessage;
@@ -2615,6 +2686,9 @@ export default function CinematicPage() {
         resetNarrationPhase({ preserveCommittedOutput: true });
       }
       if (hasNestedFlag(message.event, ["turnComplete", "turn_complete", "generationComplete", "generation_complete"])) {
+        if (phaseRef.current === "onboarding" && onboardingHandoffRef.current) {
+          onboardingHandoffCompleteRef.current = true;
+        }
         if (phaseRef.current === "acting") {
           if (narrationStartedRef.current || playPendingChunksRef.current > 0) {
             setSceneTurnComplete(true);
@@ -2652,8 +2726,13 @@ export default function CinematicPage() {
         return;
       }
       if (phaseRef.current === "onboarding" && !onboardingHandoffRef.current) {
+        onboardingWelcomeResponseReceivedRef.current = true;
         onboardingIntroPendingRef.current = false;
         clearTimeoutRef(onboardingIntroRetryTimerRef);
+      }
+      if (phaseRef.current === "onboarding" && onboardingHandoffRef.current) {
+        onboardingHandoffResponseReceivedRef.current = true;
+        if (message.final) onboardingHandoffCompleteRef.current = true;
       }
       if (phaseRef.current === "acting") {
         actingResponseReceivedRef.current = true;
@@ -2669,14 +2748,6 @@ export default function CinematicPage() {
         return;
       }
       setLiveOutputState((previous) => applyTranscriptDelta(previous, outputText, Boolean(message.final)));
-      if (phaseRef.current === "onboarding" && onboardingHandoffRef.current && message.final) {
-        clearTimeoutRef(onboardingProcessingTimerRef);
-        onboardingProcessingTimerRef.current = window.setTimeout(() => {
-          onboardingProcessingTimerRef.current = null;
-          setOnboardingHandoff(false);
-          setPhase("processing");
-        }, 420);
-      }
       if (phaseRef.current === "acting" && message.final) setSceneTurnComplete(true);
       if (phaseRef.current === "actSummary" && questionPendingRef.current) {
         setQaEntries((previous) => resolvePendingAnswer(previous, outputText, !Boolean(message.final)));
@@ -2709,36 +2780,10 @@ export default function CinematicPage() {
           setCapturedPrompt(previewText);
         }
         debugLog("onboarding:live-input", { final: Boolean(message.final), text: spokenText.slice(0, 120) });
-        if (!message.final || onboardingRecognitionSubmittedRef.current || onboardingRecognitionActiveRef.current || hasBrowserTranscript) return;
-        onboardingRecognitionSubmittedRef.current = true;
-        await stopMic();
-        const finalPrompt = onboardingRecognitionTextRef.current.trim();
-        if (finalPrompt) {
-          void beginFromPromptRef.current?.(finalPrompt);
-        }
         return;
       }
       setLiveInputState((previous) => applyTranscriptDelta(previous, message.text ?? "", Boolean(message.final)));
       debugLog("live:input", { final: Boolean(message.final), text: message.text.slice(0, 120) });
-      if (message.final && phaseRef.current === "actSummary") {
-        const spokenQuestion = message.text.trim();
-        await stopMic();
-        const command = parseVoiceCommand(spokenQuestion, Math.max(moments.length, 1));
-        if (command?.kind === "continue") {
-          await disconnectLiveRef.current?.();
-          await continueStoryRef.current?.();
-          return;
-        }
-        if (command?.kind === "replay") {
-          await disconnectLiveRef.current?.();
-          await replayMomentRef.current?.(command.momentIndex);
-          return;
-        }
-        if (spokenQuestion && !questionPendingRef.current) {
-          questionPendingRef.current = true;
-          setQaEntries((previous) => [...previous, { question: spokenQuestion, answer: "", pending: true }].slice(-6));
-        }
-      }
     }
 
     if (message.type === "audio_chunk" && message.data && message.mime_type) {
@@ -2749,8 +2794,12 @@ export default function CinematicPage() {
         return;
       }
       if (phaseRef.current === "onboarding" && !onboardingHandoffRef.current) {
+        onboardingWelcomeResponseReceivedRef.current = true;
         onboardingIntroPendingRef.current = false;
         clearTimeoutRef(onboardingIntroRetryTimerRef);
+      }
+      if (phaseRef.current === "onboarding" && onboardingHandoffRef.current) {
+        onboardingHandoffResponseReceivedRef.current = true;
       }
       clearNarrationTimers();
       if (phaseRef.current === "acting") {
@@ -2771,7 +2820,7 @@ export default function CinematicPage() {
       }
       await playPcmChunk(message.data, message.mime_type);
     }
-  }, [clearNarrationTimers, moments.length, playPcmChunk, resetNarrationPhase, resetPlayback, stopMic]);
+  }, [clearNarrationTimers, playPcmChunk, resetNarrationPhase, resetPlayback]);
 
   const disconnectLive = useCallback(async () => {
     await stopMic();
@@ -3030,7 +3079,10 @@ export default function CinematicPage() {
     if (!sessionId || !cleaned || beginInFlightRef.current) return;
     beginInFlightRef.current = true;
     await stopMic();
+    clearOnboardingTimers();
     onboardingIntroPendingRef.current = false;
+    onboardingHandoffResponseReceivedRef.current = false;
+    onboardingHandoffCompleteRef.current = false;
     setCapturedPrompt(cleaned);
     setLiveInputState({ committed: [cleaned], pending: "" });
     setQuestionDraft("");
@@ -3041,12 +3093,12 @@ export default function CinematicPage() {
     resetNarrationPhase();
     setOnboardingHandoff(true);
     setLiveOutputState(emptyTranscriptState());
-    clearTimeoutRef(onboardingProcessingTimerRef);
     onboardingProcessingTimerRef.current = window.setTimeout(() => {
       onboardingProcessingTimerRef.current = null;
+      if (phaseRef.current !== "onboarding" || !onboardingHandoffRef.current) return;
       setOnboardingHandoff(false);
       setPhase("processing");
-    }, 3200);
+    }, 7000);
 
     const liveSocketCurrent = liveSocket.current;
     if (phaseRef.current === "onboarding" && liveSocketCurrent?.readyState === WebSocket.OPEN) {
@@ -3077,6 +3129,18 @@ export default function CinematicPage() {
   }, [clearOnboardingTimers, refreshState, resetNarrationPhase, resetStoryAssets, session?.session_id, stopMic]);
 
   beginFromPromptRef.current = beginFromPrompt;
+
+  const finishOnboardingCapture = useCallback(async () => {
+    if (phaseRef.current !== "onboarding" || !liveMicOnRef.current) return;
+    const finalPrompt = mergeTranscriptText(
+      onboardingRecognitionTextRef.current,
+      transcriptLines(liveInputState).join(" ").replace(/\s+/g, " ").trim(),
+    ).trim();
+    await stopMic();
+    if (!finalPrompt || beginInFlightRef.current) return;
+    onboardingRecognitionSubmittedRef.current = true;
+    void beginFromPromptRef.current?.(finalPrompt);
+  }, [liveInputState, stopMic]);
 
   const startExperience = useCallback(async () => {
     if (sessionBooting) return;
@@ -3144,8 +3208,8 @@ export default function CinematicPage() {
 
   replayMomentRef.current = replayMoment;
 
-  const askAboutAct = useCallback(async () => {
-    const question = questionDraft.trim();
+  const submitActQuestion = useCallback(async (rawQuestion: string) => {
+    const question = rawQuestion.trim();
     const beatId = actRevealState?.beatId ?? scene.beatId;
     if (!question || !beatId) return;
     questionPendingRef.current = true;
@@ -3168,15 +3232,39 @@ export default function CinematicPage() {
       body: JSON.stringify({ kind: "WHY", question }),
     });
     await refreshState(sessionId);
-  }, [actRevealState?.beatId, ensureActLive, questionDraft, refreshState, scene.beatId, session?.session_id]);
+  }, [actRevealState?.beatId, ensureActLive, refreshState, scene.beatId, session?.session_id]);
+
+  const askAboutAct = useCallback(async () => {
+    await submitActQuestion(questionDraft);
+  }, [questionDraft, submitActQuestion]);
 
   const askAboutActByVoice = useCallback(async () => {
     const beatId = actRevealState?.beatId ?? scene.beatId;
     if (!beatId) return;
     const socket = await ensureActLive(beatId);
     if (!socket) return;
+    setLiveInputState(emptyTranscriptState());
     await startMic();
   }, [actRevealState?.beatId, ensureActLive, scene.beatId, startMic]);
+
+  const finishActVoiceQuestion = useCallback(async () => {
+    if (phaseRef.current !== "actSummary" || !liveMicOnRef.current) return;
+    const spokenQuestion = transcriptLines(liveInputState).join(" ").replace(/\s+/g, " ").trim();
+    await stopMic();
+    if (!spokenQuestion) return;
+    const command = parseVoiceCommand(spokenQuestion, Math.max(moments.length, 1));
+    if (command?.kind === "continue") {
+      await disconnectLiveRef.current?.();
+      await continueStoryRef.current?.();
+      return;
+    }
+    if (command?.kind === "replay") {
+      await disconnectLiveRef.current?.();
+      await replayMomentRef.current?.(command.momentIndex);
+      return;
+    }
+    await submitActQuestion(spokenQuestion);
+  }, [liveInputState, moments.length, stopMic, submitActQuestion]);
 
   const resetToIntro = useCallback(async () => {
     await disconnectLive();
@@ -3310,6 +3398,18 @@ export default function CinematicPage() {
     session?.session_id,
     storyboardExpectedByBeat,
   ]);
+
+  useEffect(() => {
+    if (phase !== "onboarding" || !onboardingHandoff) return undefined;
+    if (!onboardingHandoffCompleteRef.current || aiSpeaking || liveMicOn) return undefined;
+    const timer = window.setTimeout(() => {
+      if (phaseRef.current !== "onboarding" || !onboardingHandoffRef.current || aiSpeaking || liveMicOnRef.current) return;
+      clearTimeoutRef(onboardingProcessingTimerRef);
+      setOnboardingHandoff(false);
+      setPhase("processing");
+    }, 420);
+    return () => window.clearTimeout(timer);
+  }, [aiSpeaking, audioActivityTick, liveMicOn, onboardingHandoff, phase]);
 
   useEffect(() => {
     if (phase !== "actSummary" || questionPendingRef.current) return;
@@ -3569,10 +3669,12 @@ export default function CinematicPage() {
           theme={currentTheme}
           aiLine={lastAiLine}
           onMicStart={() => void startMic()}
+          onMicStop={() => void finishOnboardingCapture()}
           listening={liveMicOn}
           liveConnected={liveConnected}
           introPlaying={aiSpeaking}
           handoffPlaying={onboardingHandoff}
+          capturedPrompt={capturedPrompt}
         />
       )}
       {phase === "processing" && <ProcessingScreen theme={currentTheme} />}
@@ -3635,13 +3737,15 @@ export default function CinematicPage() {
             questionDraft={questionDraft}
             setQuestionDraft={setQuestionDraft}
             onAsk={() => void askAboutAct()}
-            onVoiceAsk={() => void askAboutActByVoice()}
+            onVoiceAskStart={() => void askAboutActByVoice()}
+            onVoiceAskStop={() => void finishActVoiceQuestion()}
             onContinue={() => void continueStory()}
             onReplayAct={() => void replayMoment(0)}
             onReplayMoment={(index) => void replayMoment(index)}
             qaEntries={qaEntries}
             asking={questionPendingRef.current}
             listening={liveMicOn}
+            voiceDraft={transcriptLines(liveInputState).join(" ").replace(/\s+/g, " ").trim()}
             liveConnected={liveConnected}
             latestLine={summaryLatestLine}
           />
