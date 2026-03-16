@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
+from app.live.director import VoiceDirectorTools
 from app.models.contracts import ChoiceRequest, DirectorSignalRequest, StartSessionRequest
 from app.models.enums import DirectorSignalType, Mode
 
@@ -74,3 +77,33 @@ async def test_director_signal_continue_act(orchestrator) -> None:  # type: igno
     assert response.ok is True
     resumed = await orchestrator.repo.get_session(session.session_id)
     assert resumed.beat_index == 2
+
+
+@pytest.mark.asyncio
+async def test_live_tool_continue_ignores_non_summary_story(orchestrator) -> None:  # type: ignore[no-untyped-def]
+    session = await orchestrator.start_session(StartSessionRequest())
+    tools = VoiceDirectorTools(orchestrator)
+    tool_context = SimpleNamespace(session=SimpleNamespace(id=session.session_id))
+
+    response = await tools.signal_continue_act(tool_context=tool_context)
+
+    assert response == {"ok": False, "error": "session not ready to continue"}
+    state = await orchestrator.repo.get_session(session.session_id)
+    assert state.beat_index == 1
+
+
+@pytest.mark.asyncio
+async def test_live_tool_continue_allows_story_summary(orchestrator) -> None:  # type: ignore[no-untyped-def]
+    session = await orchestrator.start_session(StartSessionRequest())
+    await orchestrator.repo.set_session_context(
+        session.session_id,
+        {"scene_snapshot": {"phase": "actSummary", "story_mode": {"summary": True}}},
+    )
+    tools = VoiceDirectorTools(orchestrator)
+    tool_context = SimpleNamespace(session=SimpleNamespace(id=session.session_id))
+
+    response = await tools.signal_continue_act(tool_context=tool_context)
+
+    assert response == {"ok": True}
+    state = await orchestrator.repo.get_session(session.session_id)
+    assert state.beat_index == 2
